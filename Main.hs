@@ -65,29 +65,21 @@ initColor dpy color = do
 
 mkImg :: Display -> Visual -> Dimension -> Dimension -> CInt -> UArray (Int,Int,Int) Word8 -> IO Image
 mkImg dpy vis w h depth imgData = do
-  --let bs = (0, 3 * (fromIntegral h-1) * (fromIntegral w-1))
-  ar <- newArray bs 50 :: IO (StorableArray Int CChar)
   ar <- newListArray bs ls :: IO (StorableArray Int CChar)
-
-
-  writeArray ar 0 255
-  writeArray ar 1 255
-  writeArray ar 2 255
-  writeArray ar 3 255
-  writeArray ar 4 128
-  writeArray ar 5 128
-  writeArray ar 6 128
-  writeArray ar 7 128
-  writeArray ar (4*10*(fromIntegral w) + 4*10) 255
-  --writeArray ar (4) 255
   withStorableArray ar $ \ptr ->
     createImage dpy vis depth zPixmap 0 ptr w h 32 0
 
     where
+      ((_,_,_),(ih,iw,_)) = bounds imgData
       bs = (0, (4 * (fromIntegral h) * (fromIntegral w)) - 1)
       f :: Int -> (Int,Int,Int)
-      f n = (0,0,0)
-      ar :: UArray Int Word8
+      f n = (ih-(2*r), iw-(2*c), l)
+        where
+          c = (n `div` 4) `mod` (fromIntegral w)
+          r = (n `div` 4) `div` (fromIntegral w)
+          l = case n `mod` 4 of
+                0 -> 2
+                2 -> 0
+                m -> m
       ar = ixmap bs f imgData
-      ls :: [CChar]
       ls = map fromIntegral $ elems ar
