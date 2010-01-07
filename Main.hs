@@ -16,32 +16,43 @@ import Graphics.X11.Xlib
 import Graphics.X11.Xlib.Extras
 import System.Exit (exitWith, ExitCode(..))
 
-main :: IO ()
-main = do
-  dpy <- openDisplay ""
-  rootw <- rootWindow dpy (defaultScreen dpy)
-  win <- mkWin dpy rootw
-  selectInput dpy win (exposureMask .|. buttonPressMask .|. keyPressMask)
-  mapWindow dpy win
-  ilInit
-  imgData <- readImage "/srv/photo/wrk/export/rhododendron.tif"
-  let depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
-      vis = defaultVisual dpy (defaultScreen dpy)
-  img <- mkImg dpy vis depth imgData s
-  updateWin dpy win imgData img 0 0
-  return ()
+data State = State {
+  dpy  :: Display,
+  win  :: Window,
+  img  :: UArray (Int,Int,Int) Word8,
+  ximg :: Image,
+  sc   :: Scale,
+  xoff :: Int,
+  yoff :: Int
+}
 
-updateWin dpy win imgData img x y = do
-  drawInWin dpy win imgData img x y
-  sync dpy True
+initState :: IO State
+initState = do
+  dpy' <- openDisplay ""
+  rootw <- rootWindow dpy' (defaultScreen dpy')
+  win' <- mkWin dpy' rootw
+  selectInput dpy' win' (exposureMask .|. buttonPressMask .|. keyPressMask)
+  mapWindow dpy' win'
+  ilInit
+  img' <- readImage "/srv/photo/wrk/export/rhododendron.tif"
+  let sc' = (1,5)
+  ximg' <- mkImg dpy' img' sc'
+  return State { dpy = dpy', win = win', img = img', ximg = ximg', sc = sc', xoff = 0, yoff = 0 }
+
+main :: IO ()
+main = initState >>= updateWin
+
+updateWin s = do
+  drawInWin (dpy s) (win s) (img s) (ximg s) (xoff s) (yoff s)
+  sync (dpy s) True
   allocaXEvent $ \e -> do
-    nextEvent dpy e
+    nextEvent (dpy s) e
     ev <- getEvent e
     handleEvent $ ev_event_type ev
   where
     handleEvent ev | ev == buttonPress = return ()
-                   | ev == keyPress = updateWin dpy win imgData img (x+1) y
-                   | otherwise = updateWin dpy win imgData img x y
+                   | ev == keyPress = updateWin s { xoff = xoff s + 1 }
+                   | otherwise = updateWin s
 
 
 --redraw xo yo sc img = do
@@ -50,7 +61,7 @@ updateWin dpy win imgData img x y = do
 --  let bounds' = (0, w'*h')
 --  imgArr
 
-s = (1,6)
+s = (1,1)
 
 
 mkWin dpy rootw = do
@@ -95,24 +106,24 @@ initColor dpy color = do
 
 mkImg ::
   Display ->
-  Visual ->
-  CInt ->
   UArray (Int,Int,Int) Word8 ->
   Scale ->
   IO Image
-mkImg dpy vis depth imgData s = do
+mkImg dpy img sc = do
   byteArr <- newListArray (0,byteCount) bytes
   withStorableArray byteArr $ \ptr ->
     createImage dpy vis depth zPixmap 0 ptr (fromIntegral w) (fromIntegral h) 32 0
 
     where
-      (ih,iw,_) = snd $ bounds imgData
-      (h,w) = scale s (ih,iw)
+      depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
+      vis = defaultVisual dpy (defaultScreen dpy)
+      (ih,iw,_) = snd $ bounds img
+      (h,w) = scale sc (ih,iw)
       byteCount = (4*h*w) - 1
-      bytes = map fromIntegral $ elems $ ixmap (0,byteCount) f imgData
-      f n = (ih-sr, iw-sc, l)
+      bytes = map fromIntegral $ elems $ ixmap (0,byteCount) f img
+      f n = (ih-r', iw-c', l)
         where
-          (sc,sr) = scale (snd s, fst s) (c,r)
+          (c',r') = scale (snd sc, fst sc) (c,r)
           c = (n `div` 4) `mod` w
           r = (n `div` 4) `div` w
           l = case n `mod` 4 of
