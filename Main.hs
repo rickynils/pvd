@@ -37,7 +37,6 @@ updateWin dpy win imgData img x y = do
   allocaXEvent $ \e -> do
     nextEvent dpy e
     ev <- getEvent e
-    putStrLn $ eventName ev
     handleEvent $ ev_event_type ev
   where
     handleEvent ev | ev == buttonPress = return ()
@@ -80,13 +79,6 @@ drawInWin dpy win imgData img x y = do
       portY = (winHeight-portHeight) `div` 2
       viewX = fromIntegral $ min (max 0 (fromIntegral x)) (viewWidth-portWidth)
       viewY = fromIntegral $ min (max 0 (fromIntegral y)) (viewHeight-portHeight)
-  putStrLn $ show (imgWidth,imgHeight)
-  putStrLn $ show (portWidth,portHeight)
-  putStrLn $ show (viewWidth,viewHeight)
-  putStrLn $ show (winWidth,winHeight)
-  putStrLn $ show (portX,portY)
-  putStrLn $ show (x,y)
-  putStrLn $ show (viewX,viewY)
   pixmap <- createPixmap dpy win winWidth winHeight depth
   setForeground dpy gc bgcolor
   fillRectangle dpy pixmap gc 0 0 winWidth winHeight
