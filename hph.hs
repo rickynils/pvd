@@ -11,8 +11,8 @@ loadImage filePath = do
   name <- ilGenImageNameC
   ilBindImage name
   ilLoadImage name
-  height <-
-  width <-
+  width <- ilGetIntegerC il_IMAGE_WIDTH
+  height <- ilGetIntegerC il_IMAGE_HEIGHT
   bpp <-
   ptr <- ilGetData
   let size = imgHeight*imgWidth*imgBpp

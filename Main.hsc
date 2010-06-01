@@ -1,10 +1,17 @@
+-- vim: syntax=haskell
+
 module Main (
   main,
   scale
 ) where
 
-import Codec.Image.DevIL
+import Data.Word (Word8, Word32, Word64)
+import Data.Int (Int32)
+import Foreign hiding (newArray)
+import Foreign.C
+import Codec.Image.DevIL (ilInit, readImage)
 import Control.Concurrent (threadDelay)
+import Control.Applicative
 import Data.Array.IArray
 import Data.Array.Unboxed
 import Data.Array.MArray
@@ -16,10 +23,93 @@ import Graphics.X11.Xlib
 import Graphics.X11.Xlib.Extras
 import System.Exit (exitWith, ExitCode(..))
 
+
+-----------
+
+
+data Img = Img {
+  imgName   :: ImageName,
+  imgHeight :: Int,
+  imgWidth  :: Int,
+  imgBpp    :: Int,
+  imgData   :: StorableArray Int Word8
+}
+
+#include "IL/il.h"
+
+type ILuint     = #type ILuint
+type ILsizei    = #type ILsizei
+type ILboolean  = #type ILboolean
+type ILenum     = #type ILenum
+type ILint      = #type ILint
+type ILubyte    = #type ILubyte
+
+il_RGBA = (#const IL_RGBA) :: ILenum
+il_UNSIGNED_BYTE = (#const IL_UNSIGNED_BYTE) :: ILenum
+il_IMAGE_HEIGHT = (#const IL_IMAGE_HEIGHT) :: ILenum
+il_IMAGE_WIDTH  = (#const IL_IMAGE_WIDTH)  :: ILenum
+il_IMAGE_BPP  = (#const IL_IMAGE_BPP)  :: ILenum
+
+newtype ImageName = ImageName { fromImageName :: ILuint }
+
+foreign import CALLTYPE "ilBindImage" ilBindImageC :: ILuint -> IO ()
+
+ilBindImage :: ImageName -> IO ()
+ilBindImage (ImageName name) = ilBindImageC name
+
+foreign import CALLTYPE "ilLoadImage" ilLoadImageC :: CString -> IO ILboolean
+
+ilLoadImage :: FilePath -> IO Bool
+ilLoadImage file = do
+    (0 /=) <$> withCString file ilLoadImageC
+
+foreign import CALLTYPE "ilGenImages" ilGenImagesC
+  :: ILsizei -> Ptr ILuint -> IO ()
+
+ilGenImages :: Int -> IO [ImageName]
+ilGenImages num = do
+    ar <- newArray (0, num-1) 0
+    withStorableArray ar $ \p -> do
+        ilGenImagesC (fromIntegral num) p
+    map ImageName <$> getElems ar
+
+ilGenImage :: IO ImageName
+ilGenImage = do
+  [name] <- ilGenImages 1
+  return name
+
+foreign import CALLTYPE "ilGetInteger" ilGetIntegerC
+    :: ILenum -> IO ILint
+
+foreign import CALLTYPE "ilGetData" ilGetDataC
+    :: IO (Ptr Word8)
+
+loadImage :: String -> IO Img
+loadImage filePath = do
+  name <- ilGenImage
+  ilBindImage name
+  ilLoadImage filePath
+  width <- ilGetIntegerC il_IMAGE_WIDTH
+  height <- ilGetIntegerC il_IMAGE_HEIGHT
+  bpp <- ilGetIntegerC il_IMAGE_BPP
+  putStrLn $ "BPP: "++(show bpp)++", W: "++(show width)++", H: "++(show height)
+  ptr <- ilGetDataC
+  fptr <- newForeignPtr_ ptr
+  let size = fromIntegral $ height*width*bpp
+  dat <- unsafeForeignPtrToStorableArray fptr (0,size-1)
+  return $ Img {
+    imgName = name, imgHeight = fromIntegral height, 
+    imgWidth = fromIntegral width, imgBpp = fromIntegral bpp,
+    imgData = dat
+  }
+
+-----------
+
 data State = State {
   dpy  :: Display,
   win  :: Window,
-  img  :: UArray (Int,Int,Int) Word8,
+  img  :: Img,
+--  img  :: UArray (Int,Int,Int) Word8,
   ximg :: Image,
   sc   :: Scale,
   xoff :: Int,
@@ -34,9 +124,12 @@ initState = do
   selectInput dpy' win' (exposureMask .|. buttonPressMask .|. keyPressMask)
   mapWindow dpy' win'
   ilInit
-  img' <- readImage "/srv/photo/wrk/export/rhododendron.tif"
+--  img' <- readImage "/srv/photo/export/other/lovisa_grattis.tif"
   let sc' = (1,5)
-  ximg' <- mkImg dpy' img' sc'
+--  ximg' <- mkImg dpy' img' sc'
+--  img' <- loadImage "/srv/photo/export/other/lovisa_grattis.tif"
+  img' <- loadImage "/srv/photo/export/other/Lovisa/Lovisa-1.jpg"
+  ximg' <- mkImg' dpy' img' sc'
   return State { dpy = dpy', win = win', img = img', ximg = ximg', sc = sc', xoff = 0, yoff = 0 }
 
 main :: IO ()
@@ -71,7 +164,8 @@ mkWin dpy rootw = do
 drawInWin ::
   Display ->
   Window ->
-  UArray (Int,Int,Int) Word8 ->
+--  UArray (Int,Int,Int) Word8 ->
+  Img ->
   Image ->
   Int ->
   Int ->
@@ -82,8 +176,7 @@ drawInWin dpy win imgData img x y = do
   (_,_,_,winWidth,winHeight,_,_) <- getGeometry dpy win
   let depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
       vis = defaultVisual dpy (defaultScreen dpy)
-      (imgHeight,imgWidth,_) = snd $ bounds imgData
-      (viewWidth,viewHeight) = scale s (imgWidth,imgHeight)
+      (viewWidth,viewHeight) = scale s (imgWidth imgData,imgHeight imgData)
       portWidth = min (winWidth `div` 2) viewWidth
       portHeight = min (winHeight `div` 2) viewHeight
       portX = (winWidth-portWidth) `div` 2
@@ -103,6 +196,23 @@ initColor dpy color = do
   let colormap = defaultColormap dpy (defaultScreen dpy)
   (apros,real) <- allocNamedColor dpy colormap color
   return $ color_pixel apros
+
+
+mkImg' ::
+  Display ->
+  Img ->
+  Scale ->
+  IO Image
+mkImg' dpy img sc = do
+  putStrLn $ "Depth: "++(show depth)
+  withStorableArray (imgData img) $ \ptr ->
+    createImage dpy vis depth zPixmap 0 (castPtr ptr) (fromIntegral w) (fromIntegral h) 32 0
+
+    where
+      depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
+      vis = defaultVisual dpy (defaultScreen dpy)
+      w = imgWidth img
+      h = imgHeight img
 
 mkImg ::
   Display ->
