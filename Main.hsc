@@ -32,7 +32,7 @@ data Img = Img {
   imgHeight :: Int,
   imgWidth  :: Int,
   imgBpp    :: Int,
-  imgData   :: StorableArray Int Word8
+  imgData   :: StorableArray (Int,Int,Int) Word8
 }
 
 #include "IL/il.h"
@@ -44,11 +44,15 @@ type ILenum     = #type ILenum
 type ILint      = #type ILint
 type ILubyte    = #type ILubyte
 
+il_BGR = (#const IL_BGR) :: ILenum
+il_BGRA = (#const IL_BGRA) :: ILenum
+il_RGB = (#const IL_RGB) :: ILenum
 il_RGBA = (#const IL_RGBA) :: ILenum
 il_UNSIGNED_BYTE = (#const IL_UNSIGNED_BYTE) :: ILenum
 il_IMAGE_HEIGHT = (#const IL_IMAGE_HEIGHT) :: ILenum
 il_IMAGE_WIDTH  = (#const IL_IMAGE_WIDTH)  :: ILenum
 il_IMAGE_BPP  = (#const IL_IMAGE_BPP)  :: ILenum
+il_IMAGE_FORMAT  = (#const IL_IMAGE_FORMAT)  :: ILenum
 
 newtype ImageName = ImageName { fromImageName :: ILuint }
 
@@ -73,11 +77,6 @@ ilGenImages num = do
         ilGenImagesC (fromIntegral num) p
     map ImageName <$> getElems ar
 
-ilGenImage :: IO ImageName
-ilGenImage = do
-  [name] <- ilGenImages 1
-  return name
-
 foreign import CALLTYPE "ilGetInteger" ilGetIntegerC
     :: ILenum -> IO ILint
 
@@ -86,20 +85,21 @@ foreign import CALLTYPE "ilGetData" ilGetDataC
 
 loadImage :: String -> IO Img
 loadImage filePath = do
-  name <- ilGenImage
+  [name] <- ilGenImages 1
   ilBindImage name
   ilLoadImage filePath
-  width <- ilGetIntegerC il_IMAGE_WIDTH
-  height <- ilGetIntegerC il_IMAGE_HEIGHT
+  w <- ilGetIntegerC il_IMAGE_WIDTH
+  h <- ilGetIntegerC il_IMAGE_HEIGHT
   bpp <- ilGetIntegerC il_IMAGE_BPP
-  putStrLn $ "BPP: "++(show bpp)++", W: "++(show width)++", H: "++(show height)
+  f <- ilGetIntegerC il_IMAGE_FORMAT
+  let bounds = ((0,0,0), (fromIntegral w-1, fromIntegral h-1, (fromIntegral bpp)-1))
+  putStrLn $ "BPP: "++(show bpp)++", W: "++(show w)++", H: "++(show h)++", F: "++(show f)
   ptr <- ilGetDataC
   fptr <- newForeignPtr_ ptr
-  let size = fromIntegral $ height*width*bpp
-  dat <- unsafeForeignPtrToStorableArray fptr (0,size-1)
+  dat <- unsafeForeignPtrToStorableArray fptr bounds
   return $ Img {
-    imgName = name, imgHeight = fromIntegral height, 
-    imgWidth = fromIntegral width, imgBpp = fromIntegral bpp,
+    imgName = name, imgHeight = fromIntegral h, 
+    imgWidth = fromIntegral w, imgBpp = fromIntegral bpp,
     imgData = dat
   }
 
@@ -129,7 +129,8 @@ initState = do
 --  ximg' <- mkImg dpy' img' sc'
 --  img' <- loadImage "/srv/photo/export/other/lovisa_grattis.tif"
   img' <- loadImage "/srv/photo/export/other/Lovisa/Lovisa-1.jpg"
-  ximg' <- mkImg' dpy' img' sc'
+  ximg' <- makeXImage dpy' img' (imgWidth img') (imgHeight img') id
+  --ximg' <- makeXImage dpy' img' 100 200 id
   return State { dpy = dpy', win = win', img = img', ximg = ximg', sc = sc', xoff = 0, yoff = 0 }
 
 main :: IO ()
@@ -196,6 +197,25 @@ initColor dpy color = do
   let colormap = defaultColormap dpy (defaultScreen dpy)
   (apros,real) <- allocNamedColor dpy colormap color
   return $ color_pixel apros
+
+
+makeXImage :: Display -> Img -> Int -> Int -> ((Int,Int) -> (Int,Int)) -> IO Image
+makeXImage dpy img w' h' fxy = do
+  xImgData <- mapIndices bs mapIdx (imgData img)
+  withStorableArray xImgData (ci . castPtr)
+  where
+    ci p = createImage dpy vis depth zPixmap 0 p (fi w') (fi h') 32 0
+    depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
+    vis = defaultVisual dpy (defaultScreen dpy)
+    bs  = ((0,0,0), (w'-1,h'-1,3))
+    fi = fromIntegral
+    mapIdx (x,y,c) = (x', y', c' c)
+      where
+        (x',y') = fxy (imgWidth img - x - 1, imgHeight img - y - 1)
+        c' 0 = 2
+        c' 1 = 1
+        c' 2 = 0
+        c' 3 = 0
 
 
 mkImg' ::
