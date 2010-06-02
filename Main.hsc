@@ -1,8 +1,7 @@
 -- vim: syntax=haskell
 
 module Main (
-  main,
-  scale
+  main
 ) where
 
 import Data.Word (Word8, Word32, Word64)
@@ -22,10 +21,6 @@ import Foreign.C.Types
 import Graphics.X11.Xlib
 import Graphics.X11.Xlib.Extras
 import System.Exit (exitWith, ExitCode(..))
-
-
------------
-
 
 data Img = Img {
   imgName   :: ImageName,
@@ -88,32 +83,30 @@ loadImage filePath = do
   [name] <- ilGenImages 1
   ilBindImage name
   ilLoadImage filePath
-  w <- ilGetIntegerC il_IMAGE_WIDTH
-  h <- ilGetIntegerC il_IMAGE_HEIGHT
-  bpp <- ilGetIntegerC il_IMAGE_BPP
-  f <- ilGetIntegerC il_IMAGE_FORMAT
-  let bounds = ((0,0,0), (fromIntegral w-1, fromIntegral h-1, (fromIntegral bpp)-1))
-  putStrLn $ "BPP: "++(show bpp)++", W: "++(show w)++", H: "++(show h)++", F: "++(show f)
+  cols <- ilGetIntegerC il_IMAGE_WIDTH
+  rows <- ilGetIntegerC il_IMAGE_HEIGHT
+  bpp  <- ilGetIntegerC il_IMAGE_BPP
+  f    <- ilGetIntegerC il_IMAGE_FORMAT
+  let bounds = ((0,0,0), (fromIntegral rows-1, fromIntegral cols-1, (fromIntegral bpp)-1))
+  putStrLn $ "BPP: "++(show bpp)++", W: "++(show cols)++", H: "++(show rows)++", F: "++(show f)
   ptr <- ilGetDataC
   fptr <- newForeignPtr_ ptr
   dat <- unsafeForeignPtrToStorableArray fptr bounds
   return $ Img {
-    imgName = name, imgHeight = fromIntegral h, 
-    imgWidth = fromIntegral w, imgBpp = fromIntegral bpp,
+    imgName = name, imgHeight = fromIntegral rows, 
+    imgWidth = fromIntegral cols, imgBpp = fromIntegral bpp,
     imgData = dat
   }
-
------------
 
 data State = State {
   dpy  :: Display,
   win  :: Window,
   img  :: Img,
---  img  :: UArray (Int,Int,Int) Word8,
   ximg :: Image,
-  sc   :: Scale,
   xoff :: Int,
-  yoff :: Int
+  yoff :: Int,
+  imgw :: Int,
+  imgh :: Int
 }
 
 initState :: IO State
@@ -124,20 +117,19 @@ initState = do
   selectInput dpy' win' (exposureMask .|. buttonPressMask .|. keyPressMask)
   mapWindow dpy' win'
   ilInit
---  img' <- readImage "/srv/photo/export/other/lovisa_grattis.tif"
-  let sc' = (1,5)
---  ximg' <- mkImg dpy' img' sc'
---  img' <- loadImage "/srv/photo/export/other/lovisa_grattis.tif"
   img' <- loadImage "/srv/photo/export/other/Lovisa/Lovisa-1.jpg"
-  ximg' <- makeXImage dpy' img' (imgWidth img') (imgHeight img') id
-  --ximg' <- makeXImage dpy' img' 100 200 id
-  return State { dpy = dpy', win = win', img = img', ximg = ximg', sc = sc', xoff = 0, yoff = 0 }
+  let w = imgWidth img' `div` 2
+  let h = imgHeight img' `div` 2
+  ximg' <- makeXImage dpy' img' w h half
+  return State { dpy = dpy', win = win', img = img', ximg = ximg', xoff = 0, yoff = 0, imgw = w, imgh = h}
 
 main :: IO ()
 main = initState >>= updateWin
 
+half (x,y) = (2*x, 2*y)
+
 updateWin s = do
-  drawInWin (dpy s) (win s) (img s) (ximg s) (xoff s) (yoff s)
+  drawInWin (dpy s) (win s) (ximg s) (xoff s) (yoff s) (imgw s) (imgh s)
   sync (dpy s) True
   allocaXEvent $ \e -> do
     nextEvent (dpy s) e
@@ -148,16 +140,6 @@ updateWin s = do
                    | ev == keyPress = updateWin s { xoff = xoff s + 1 }
                    | otherwise = updateWin s
 
-
---redraw xo yo sc img = do
---  let (w,h,_) = (snd . bounds) img
---  let (w',h') = (div w 2, div h 2)
---  let bounds' = (0, w'*h')
---  imgArr
-
-s = (1,1)
-
-
 mkWin dpy rootw = do
   col <- initColor dpy "#444444"
   createSimpleWindow dpy rootw 0 0 100 100 1 col col
@@ -165,29 +147,28 @@ mkWin dpy rootw = do
 drawInWin ::
   Display ->
   Window ->
---  UArray (Int,Int,Int) Word8 ->
-  Img ->
   Image ->
   Int ->
   Int ->
+  Int ->
+  Int ->
   IO ()
-drawInWin dpy win imgData img x y = do
+drawInWin dpy win img x y w h = do
   bgcolor <- initColor dpy "#444444"
   gc <- createGC dpy win
   (_,_,_,winWidth,winHeight,_,_) <- getGeometry dpy win
   let depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
       vis = defaultVisual dpy (defaultScreen dpy)
-      (viewWidth,viewHeight) = scale s (imgWidth imgData,imgHeight imgData)
-      portWidth = min (winWidth `div` 2) viewWidth
-      portHeight = min (winHeight `div` 2) viewHeight
-      portX = (winWidth-portWidth) `div` 2
-      portY = (winHeight-portHeight) `div` 2
-      viewX = fromIntegral $ min (max 0 (fromIntegral x)) (viewWidth-portWidth)
-      viewY = fromIntegral $ min (max 0 (fromIntegral y)) (viewHeight-portHeight)
+      portWidth = min (winWidth) (fromIntegral w)
+      portHeight = min (winHeight) (fromIntegral h)
+      portX = 0
+      portY = 0
+      viewX = 0
+      viewY = 0
   pixmap <- createPixmap dpy win winWidth winHeight depth
   setForeground dpy gc bgcolor
   fillRectangle dpy pixmap gc 0 0 winWidth winHeight
-  putImage dpy pixmap gc img viewX viewY (fromIntegral portX) (fromIntegral portY) portWidth portHeight
+  putImage dpy pixmap gc img viewX viewY portX portY portWidth portHeight
   copyArea dpy pixmap win gc 0 0 winWidth winHeight 0 0
   freeGC dpy gc
   freePixmap dpy pixmap
@@ -198,76 +179,20 @@ initColor dpy color = do
   (apros,real) <- allocNamedColor dpy colormap color
   return $ color_pixel apros
 
-
 makeXImage :: Display -> Img -> Int -> Int -> ((Int,Int) -> (Int,Int)) -> IO Image
-makeXImage dpy img w' h' fxy = do
+makeXImage dpy img w h fxy = do
   xImgData <- mapIndices bs mapIdx (imgData img)
   withStorableArray xImgData (ci . castPtr)
   where
-    ci p = createImage dpy vis depth zPixmap 0 p (fi w') (fi h') 32 0
+    ci p = createImage dpy vis depth zPixmap 0 p (fi w) (fi h) 32 0
     depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
     vis = defaultVisual dpy (defaultScreen dpy)
-    bs  = ((0,0,0), (w'-1,h'-1,3))
+    bs = ((0,0,0), (h-1,w-1,3))
     fi = fromIntegral
-    mapIdx (x,y,c) = (x', y', c' c)
+    mapIdx (y,x,c) = (imgHeight img - y' - 1, imgWidth img - x' - 1, c' c)
       where
-        (x',y') = fxy (imgWidth img - x - 1, imgHeight img - y - 1)
+        (x',y') = fxy (x,y)
         c' 0 = 2
         c' 1 = 1
         c' 2 = 0
         c' 3 = 0
-
-
-mkImg' ::
-  Display ->
-  Img ->
-  Scale ->
-  IO Image
-mkImg' dpy img sc = do
-  putStrLn $ "Depth: "++(show depth)
-  withStorableArray (imgData img) $ \ptr ->
-    createImage dpy vis depth zPixmap 0 (castPtr ptr) (fromIntegral w) (fromIntegral h) 32 0
-
-    where
-      depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
-      vis = defaultVisual dpy (defaultScreen dpy)
-      w = imgWidth img
-      h = imgHeight img
-
-mkImg ::
-  Display ->
-  UArray (Int,Int,Int) Word8 ->
-  Scale ->
-  IO Image
-mkImg dpy img sc = do
-  byteArr <- newListArray (0,byteCount) bytes
-  withStorableArray byteArr $ \ptr ->
-    createImage dpy vis depth zPixmap 0 ptr (fromIntegral w) (fromIntegral h) 32 0
-
-    where
-      depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
-      vis = defaultVisual dpy (defaultScreen dpy)
-      (ih,iw,_) = snd $ bounds img
-      (h,w) = scale sc (ih,iw)
-      byteCount = (4*h*w) - 1
-      bytes = map fromIntegral $ elems $ ixmap (0,byteCount) f img
-      f n = (ih-r', iw-c', l)
-        where
-          (c',r') = scale (snd sc, fst sc) (c,r)
-          c = (n `div` 4) `mod` w
-          r = (n `div` 4) `div` w
-          l = case n `mod` 4 of
-                0 -> 2
-                2 -> 0
-                m -> m
-
-scale (s1,s2) (h,w) = (h',w')
-  where
-    h' = round $ fromIntegral (s1*h) / fromIntegral s2
-    w' = round $ fromIntegral (s1*w) / fromIntegral s2
-
-
-type Scale = (Int,Int)
-type PixelPos = (Int,Int,Int)
-type Transformer = Scale -> PixelPos -> [(PixelPos,Int)]
-
