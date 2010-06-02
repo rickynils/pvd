@@ -18,17 +18,9 @@ import Data.Array.Storable
 import Data.Bits
 import Debug.Trace
 import Foreign.C.Types
-import Graphics.X11.Xlib
-import Graphics.X11.Xlib.Extras
+import qualified Graphics.X11.Xlib as X
+import qualified Graphics.X11.Xlib.Extras as X
 import System.Exit (exitWith, ExitCode(..))
-
-data Img = Img {
-  imgName   :: ImageName,
-  imgHeight :: Int,
-  imgWidth  :: Int,
-  imgBpp    :: Int,
-  imgData   :: StorableArray (Int,Int,Int) Word8
-}
 
 #include "IL/il.h"
 
@@ -78,6 +70,23 @@ foreign import CALLTYPE "ilGetInteger" ilGetIntegerC
 foreign import CALLTYPE "ilGetData" ilGetDataC
     :: IO (Ptr Word8)
 
+data Img = Img {
+  imgName   :: ImageName,
+  imgHeight :: Int,
+  imgWidth  :: Int,
+  imgBpp    :: Int,
+  imgData   :: StorableArray (Int,Int,Int) Word8
+}
+
+data State = State {
+  stDpy       :: X.Display,
+  stWin       :: X.Window,
+  stImg       :: Img,
+  stXImg      :: Maybe X.Image,
+  stXImgWidth  :: Int,
+  stXImgHeight :: Int
+}
+
 loadImage :: String -> IO Img
 loadImage filePath = do
   [name] <- ilGenImages 1
@@ -93,35 +102,21 @@ loadImage filePath = do
   fptr <- newForeignPtr_ ptr
   dat <- unsafeForeignPtrToStorableArray fptr bounds
   return $ Img {
-    imgName = name, imgHeight = fromIntegral rows, 
+    imgName = name, imgHeight = fromIntegral rows,
     imgWidth = fromIntegral cols, imgBpp = fromIntegral bpp,
     imgData = dat
   }
 
-data State = State {
-  dpy  :: Display,
-  win  :: Window,
-  img  :: Img,
-  ximg :: Image,
-  xoff :: Int,
-  yoff :: Int,
-  imgw :: Int,
-  imgh :: Int
-}
-
 initState :: IO State
 initState = do
-  dpy' <- openDisplay ""
-  rootw <- rootWindow dpy' (defaultScreen dpy')
-  win' <- mkWin dpy' rootw
-  selectInput dpy' win' (exposureMask .|. buttonPressMask .|. keyPressMask)
-  mapWindow dpy' win'
+  dpy <- X.openDisplay ""
+  rootw <- X.rootWindow dpy (X.defaultScreen dpy)
+  win <- mkWin dpy rootw
+  X.selectInput dpy win (X.exposureMask .|. X.buttonPressMask .|. X.keyPressMask)
+  X.mapWindow dpy win
   ilInit
-  img' <- loadImage "/srv/photo/export/other/Lovisa/Lovisa-1.jpg"
-  let w = imgWidth img' `div` 2
-  let h = imgHeight img' `div` 2
-  ximg' <- makeXImage dpy' img' w h half
-  return State { dpy = dpy', win = win', img = img', ximg = ximg', xoff = 0, yoff = 0, imgw = w, imgh = h}
+  img <- loadImage "/srv/photo/export/other/Lovisa/Lovisa-1.jpg"
+  remakeXImage State { stDpy = dpy, stWin = win, stImg = img, stXImg = Nothing, stXImgWidth = 0, stXImgHeight = 0}
 
 main :: IO ()
 main = initState >>= updateWin
@@ -129,64 +124,66 @@ main = initState >>= updateWin
 half (x,y) = (2*x, 2*y)
 
 updateWin s = do
-  drawInWin (dpy s) (win s) (ximg s) (xoff s) (yoff s) (imgw s) (imgh s)
-  sync (dpy s) True
-  allocaXEvent $ \e -> do
-    nextEvent (dpy s) e
-    ev <- getEvent e
-    handleEvent $ ev_event_type ev
+  s' <- remakeXImage s
+  let (Just ximg) = stXImg s'
+  drawImg (stDpy s') (stWin s') ximg (stXImgWidth s') (stXImgHeight s')
+  X.sync (stDpy s') True
+  X.allocaXEvent $ \e -> do
+    X.nextEvent (stDpy s') e
+    ev <- X.getEvent e
+    handleEvent s' $ X.ev_event_type ev
   where
-    handleEvent ev | ev == buttonPress = return ()
-                   | ev == keyPress = updateWin s { xoff = xoff s + 1 }
-                   | otherwise = updateWin s
+    handleEvent s ev | ev == X.buttonPress = return ()
+                     | ev == X.keyPress = updateWin s
+                     | otherwise = updateWin s
+
+remakeXImage s@(State { stDpy = dpy, stWin = win, stImg = img, stXImg = ximg, stXImgWidth = ximgw, stXImgHeight = ximgh }) = do
+  (_,_,_,winWidth,winHeight,_,_) <- X.getGeometry dpy win
+  let w = min (fromIntegral winWidth) (imgWidth img)
+      h = min (fromIntegral winHeight) (imgHeight img)
+  if ximg == Nothing || w /= ximgw || h /= ximgh
+    then do
+      ximg <- makeXImage dpy img w h id
+      return s { stXImg = Just ximg, stXImgWidth = w, stXImgHeight = h }
+    else return s
 
 mkWin dpy rootw = do
   col <- initColor dpy "#444444"
-  createSimpleWindow dpy rootw 0 0 100 100 1 col col
+  X.createSimpleWindow dpy rootw 0 0 100 100 1 col col
 
-drawInWin ::
-  Display ->
-  Window ->
-  Image ->
-  Int ->
-  Int ->
-  Int ->
-  Int ->
-  IO ()
-drawInWin dpy win img x y w h = do
+drawImg :: X.Display -> X.Window -> X.Image -> Int -> Int -> IO ()
+drawImg dpy win ximg w h = do
   bgcolor <- initColor dpy "#444444"
-  gc <- createGC dpy win
-  (_,_,_,winWidth,winHeight,_,_) <- getGeometry dpy win
-  let depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
-      vis = defaultVisual dpy (defaultScreen dpy)
-      portWidth = min (winWidth) (fromIntegral w)
-      portHeight = min (winHeight) (fromIntegral h)
-      portX = 0
-      portY = 0
-      viewX = 0
-      viewY = 0
-  pixmap <- createPixmap dpy win winWidth winHeight depth
-  setForeground dpy gc bgcolor
-  fillRectangle dpy pixmap gc 0 0 winWidth winHeight
-  putImage dpy pixmap gc img viewX viewY portX portY portWidth portHeight
-  copyArea dpy pixmap win gc 0 0 winWidth winHeight 0 0
-  freeGC dpy gc
-  freePixmap dpy pixmap
+  gc <- X.createGC dpy win
+  (_,_,_,winWidth,winHeight,_,_) <- X.getGeometry dpy win
+  let depth = X.defaultDepthOfScreen (X.defaultScreenOfDisplay dpy)
+      vis = X.defaultVisual dpy (X.defaultScreen dpy)
+      portWidth = fromIntegral w
+      portHeight = fromIntegral h
+      portX = fromIntegral ((winWidth-portWidth) `div` 2)
+      portY = fromIntegral ((winHeight-portHeight) `div` 2)
+  pixmap <- X.createPixmap dpy win winWidth winHeight depth
+  X.setForeground dpy gc bgcolor
+  X.fillRectangle dpy pixmap gc 0 0 winWidth winHeight
+  X.putImage dpy pixmap gc ximg 0 0 portX portY portWidth portHeight
+  X.copyArea dpy pixmap win gc 0 0 winWidth winHeight 0 0
+  X.freeGC dpy gc
+  X.freePixmap dpy pixmap
 
-initColor :: Display -> String -> IO Pixel
+initColor :: X.Display -> String -> IO X.Pixel
 initColor dpy color = do
-  let colormap = defaultColormap dpy (defaultScreen dpy)
-  (apros,real) <- allocNamedColor dpy colormap color
-  return $ color_pixel apros
+  let colormap = X.defaultColormap dpy (X.defaultScreen dpy)
+  (apros,real) <- X.allocNamedColor dpy colormap color
+  return $ X.color_pixel apros
 
-makeXImage :: Display -> Img -> Int -> Int -> ((Int,Int) -> (Int,Int)) -> IO Image
+makeXImage :: X.Display -> Img -> Int -> Int -> ((Int,Int) -> (Int,Int)) -> IO X.Image
 makeXImage dpy img w h fxy = do
   xImgData <- mapIndices bs mapIdx (imgData img)
   withStorableArray xImgData (ci . castPtr)
   where
-    ci p = createImage dpy vis depth zPixmap 0 p (fi w) (fi h) 32 0
-    depth = defaultDepthOfScreen (defaultScreenOfDisplay dpy)
-    vis = defaultVisual dpy (defaultScreen dpy)
+    ci p = X.createImage dpy vis depth X.zPixmap 0 p (fi w) (fi h) 32 0
+    depth = X.defaultDepthOfScreen (X.defaultScreenOfDisplay dpy)
+    vis = X.defaultVisual dpy (X.defaultScreen dpy)
     bs = ((0,0,0), (h-1,w-1,3))
     fi = fromIntegral
     mapIdx (y,x,c) = (imgHeight img - y' - 1, imgWidth img - x' - 1, c' c)
