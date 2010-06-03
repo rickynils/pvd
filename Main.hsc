@@ -70,6 +70,15 @@ foreign import CALLTYPE "ilGetInteger" ilGetIntegerC
 foreign import CALLTYPE "ilGetData" ilGetDataC
     :: IO (Ptr Word8)
 
+foreign import CALLTYPE "ilDeleteImages" ilDeleteImagesC
+    :: ILsizei -> Ptr ILuint -> IO ()
+
+ilDeleteImages :: [ImageName] -> IO ()
+ilDeleteImages names = do
+    ar <- newListArray (0, length names-1) (fromImageName <$> names)
+    withStorableArray ar $ \p -> do
+        ilDeleteImagesC (fromIntegral $ length names) p
+
 data Img = Img {
   imgName   :: ImageName,
   imgHeight :: Int,
@@ -119,7 +128,9 @@ initState = do
   remakeXImage State { stDpy = dpy, stWin = win, stImg = img, stXImg = Nothing, stXImgWidth = 0, stXImgHeight = 0}
 
 main :: IO ()
-main = initState >>= updateWin
+main = initState >>= updateWin >>= cleanUp
+
+cleanUp s = ilDeleteImages [imgName (stImg s)]
 
 half (x,y) = (2*x, 2*y)
 
@@ -133,7 +144,7 @@ updateWin s = do
     ev <- X.getEvent e
     handleEvent s' $ X.ev_event_type ev
   where
-    handleEvent s ev | ev == X.buttonPress = return ()
+    handleEvent s ev | ev == X.buttonPress = return s
                      | ev == X.keyPress = updateWin s
                      | otherwise = updateWin s
 
