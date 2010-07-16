@@ -4,17 +4,17 @@ module Main (
   main
 ) where
 
-import Prelude hiding (elem)
+import Prelude hiding (notElem)
 import Data.Word (Word8, Word32, Word64)
 import Data.Int (Int32)
 import Data.Maybe
-import Data.Foldable (for_, elem)
+import Data.Foldable (for_, notElem)
 import Foreign hiding (newArray)
 import Foreign.C
 import Codec.Image.DevIL (ilInit, readImage)
 import Control.Concurrent
 import Control.Monad
-import Control.Monad.Maybe
+import Control.Monad.Error
 import Control.Monad.Trans
 import Control.Exception
 import Control.Applicative
@@ -102,7 +102,7 @@ data XImg = XImg {
   xImgW :: Int
 }
 
-loadImage :: String -> MaybeT IO Img
+loadImage :: String -> ErrorT String IO Img
 loadImage filePath = do
   [name] <- lift $ ilGenImages 1
   lift $ ilBindImage name
@@ -140,6 +140,7 @@ drawImg dpy win ximg = do
   X.copyArea dpy pixmap win gc 0 0 winWidth winHeight 0 0
   X.freeGC dpy gc
   X.freePixmap dpy pixmap
+  X.sync dpy True
 
 initColor :: X.Display -> String -> IO X.Pixel
 initColor dpy color = do
@@ -167,7 +168,7 @@ makeXImage dpy img = do
         c' 2 = 0
         c' 3 = 0
 
-loadXImg :: X.Display -> String -> MaybeT IO XImg
+loadXImg :: X.Display -> String -> ErrorT String IO XImg
 loadXImg dpy path = do
   img <- loadImage path
   ximg <- lift $ makeXImage dpy img
@@ -177,13 +178,12 @@ loadXImg dpy path = do
 main = do
   imgPath <- newEmptyMVar
   (dpy,win) <- initX
-  forkIO $ runMaybeT (eventLoop imgPath dpy win) >> return ()
-  initSocket "4245" >>= socketLoop (\p -> putMVar imgPath p >> expose dpy win)
-
-expose dpy win = X.allocaXEvent $ \e -> do
-  X.setEventType e X.expose
-  X.sendEvent dpy win False X.noEventMask e
-  X.flush dpy
+  let expose = X.allocaXEvent $ \e -> do
+        X.setEventType e X.expose
+        X.sendEvent dpy win False X.noEventMask e
+        X.flush dpy
+  forkIO $ eventLoop imgPath dpy win
+  initSocket "4245" >>= socketLoop (\p -> putMVar imgPath p >> expose)
 
 initX = do
   dpy <- X.openDisplay ""
@@ -220,15 +220,13 @@ socketLoop onNewImg sock = do
         mapM_ onNewImg (lines messages)
         hClose connhdl
 
-eventLoop imgPath dpy win = innerLoop Nothing Nothing
+eventLoop imgPath dpy win = runErrorT (innerLoop Nothing Nothing) >> return ()
   where
-    innerLoop :: Maybe String -> Maybe XImg -> MaybeT IO ()
+    gNotElem e m = guard $ notElem e m
     innerLoop path ximg = do
       path' <- lift $ tryTakeMVar imgPath
-      ximg' <- case path' of
-                 Just p | not (elem p path) -> lift $ runMaybeT $ loadXImg dpy p
-                 _ -> return ximg
+      ximg' <- flip mplus (return ximg)
+        (do Just p <- return path; gNotElem p path; fmap Just $ loadXImg dpy p)
       lift $ drawImg dpy win ximg'
-      lift $ X.sync dpy True
       lift $ X.allocaXEvent $ \e -> X.nextEvent dpy e
       innerLoop path' ximg'
