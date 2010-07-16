@@ -4,15 +4,18 @@ module Main (
   main
 ) where
 
+import Prelude hiding (elem)
 import Data.Word (Word8, Word32, Word64)
 import Data.Int (Int32)
 import Data.Maybe
-import Data.Foldable (for_)
+import Data.Foldable (for_, elem)
 import Foreign hiding (newArray)
 import Foreign.C
 import Codec.Image.DevIL (ilInit, readImage)
 import Control.Concurrent
 import Control.Monad
+import Control.Monad.Maybe
+import Control.Monad.Trans
 import Control.Exception
 import Control.Applicative
 import Data.Array.IArray
@@ -99,27 +102,25 @@ data XImg = XImg {
   xImgW :: Int
 }
 
-loadImage :: String -> IO (Maybe Img)
+loadImage :: String -> MaybeT IO Img
 loadImage filePath = do
-  [name] <- ilGenImages 1
-  ilBindImage name
-  ilLoadImage filePath
-  cols <- ilGetIntegerC il_IMAGE_WIDTH
-  rows <- ilGetIntegerC il_IMAGE_HEIGHT
-  bpp  <- ilGetIntegerC il_IMAGE_BPP
-  f    <- ilGetIntegerC il_IMAGE_FORMAT
-  if cols <= 1 || rows <= 1
-    then ilDeleteImages [name] >> return Nothing
-    else do
-      let bounds = ((0,0,0), (fromIntegral rows-1, fromIntegral cols-1, (fromIntegral bpp)-1))
-      ptr <- ilGetDataC
-      fptr <- newForeignPtr_ ptr
-      dat <- unsafeForeignPtrToStorableArray fptr bounds
-      return $ Just $ Img {
-        imgName = name, imgHeight = fromIntegral rows,
-        imgWidth = fromIntegral cols, imgBpp = fromIntegral bpp,
-        imgData = dat
-      }
+  [name] <- lift $ ilGenImages 1
+  lift $ ilBindImage name
+  lift $ ilLoadImage filePath
+  cols <- lift $ ilGetIntegerC il_IMAGE_WIDTH
+  rows <- lift $ ilGetIntegerC il_IMAGE_HEIGHT
+  bpp  <- lift $ ilGetIntegerC il_IMAGE_BPP
+  f    <- lift $ ilGetIntegerC il_IMAGE_FORMAT
+  unless (cols > 1 && rows > 1) $ lift (ilDeleteImages [name]) >> fail ""
+  let bounds = ((0,0,0), (fromIntegral rows-1, fromIntegral cols-1, (fromIntegral bpp)-1))
+  ptr <- lift ilGetDataC
+  fptr <- lift $ newForeignPtr_ ptr
+  dat <- lift $ unsafeForeignPtrToStorableArray fptr bounds
+  return Img {
+    imgName = name, imgHeight = fromIntegral rows,
+    imgWidth = fromIntegral cols, imgBpp = fromIntegral bpp,
+    imgData = dat
+  }
 
 drawImg :: X.Display -> X.Window -> Maybe XImg -> IO ()
 drawImg dpy win ximg = do
@@ -166,20 +167,17 @@ makeXImage dpy img = do
         c' 2 = 0
         c' 3 = 0
 
-loadXImg :: X.Display -> String -> IO (Maybe XImg)
+loadXImg :: X.Display -> String -> MaybeT IO XImg
 loadXImg dpy path = do
   img <- loadImage path
-  if isNothing img
-    then return Nothing
-    else do
-      ximg <- makeXImage dpy (fromJust img)
-      ilDeleteImages [imgName (fromJust img)]
-      return $ Just ximg
+  ximg <- lift $ makeXImage dpy img
+  lift $ ilDeleteImages [imgName img]
+  return ximg
 
 main = do
   imgPath <- newEmptyMVar
   (dpy,win) <- initX
-  forkIO (eventLoop imgPath dpy win)
+  forkIO $ runMaybeT (eventLoop imgPath dpy win) >> return ()
   initSocket "4245" >>= socketLoop (\p -> putMVar imgPath p >> expose dpy win)
 
 expose dpy win = X.allocaXEvent $ \e -> do
@@ -224,13 +222,13 @@ socketLoop onNewImg sock = do
 
 eventLoop imgPath dpy win = innerLoop Nothing Nothing
   where
+    innerLoop :: Maybe String -> Maybe XImg -> MaybeT IO ()
     innerLoop path ximg = do
-      path' <- tryTakeMVar imgPath
-      ximg' <- if path == path' || isNothing path'
-                 then return ximg
-                 else loadXImg dpy (fromJust path')
-      drawImg dpy win ximg'
-      X.sync dpy True
-      X.allocaXEvent $ \e -> do
-        X.nextEvent dpy e
-        innerLoop path' ximg'
+      path' <- lift $ tryTakeMVar imgPath
+      ximg' <- case path' of
+                 Just p | not (elem p path) -> lift $ runMaybeT $ loadXImg dpy p
+                 _ -> return ximg
+      lift $ drawImg dpy win ximg'
+      lift $ X.sync dpy True
+      lift $ X.allocaXEvent $ \e -> X.nextEvent dpy e
+      innerLoop path' ximg'
