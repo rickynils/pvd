@@ -7,7 +7,8 @@ Build-Type:     Simple
 
 Executable hph
   Build-Depends:   base >= 4, array, X11, Codec-Image-DevIL, network, mtl
-  Main-Is:         Main.hs
+  Main-Is:         Hph.hs
+  Other-Modules:   Codec.Image.DevIL.Extras
   Build-Tools:     hsc2hs
   Extensions:      ForeignFunctionInterface, CPP
   Ghc-Options:     -threaded -O2
