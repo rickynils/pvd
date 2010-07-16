@@ -1,0 +1,18 @@
+Name:           Hph
+Version:        0.1
+Author:         Rickard Nilsson
+Maintainer:     rickard.nilsson@telia.com
+Cabal-Version:  >= 1.2
+Build-Type:     Simple
+
+Executable hph
+  Build-Depends:   base >= 4, array, X11, Codec-Image-DevIL, network, mtl
+  Main-Is:         Main.hs
+  Build-Tools:     hsc2hs
+  Extensions:      ForeignFunctionInterface, CPP
+  Ghc-Options:     -threaded -O2
+  Extra-Libraries: IL, pthread
+  if os(windows)
+    CPP-Options: -DCALLTYPE=stdcall
+  else
+    CPP-Options: -DCALLTYPE=ccall
