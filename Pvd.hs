@@ -85,12 +85,13 @@ loadXImg dpy path = do
 main = do
   imgPath <- newEmptyMVar
   (dpy,win) <- initX
-  let expose = X.allocaXEvent $ \e -> do
+  let onNewImg p = X.allocaXEvent $ \e -> do
+        putMVar imgPath p
         X.setEventType e X.expose
         X.sendEvent dpy win False X.noEventMask e
         X.flush dpy
   forkIO $ eventLoop imgPath dpy win
-  initSocket "4245" >>= socketLoop (\p -> putMVar imgPath p >> expose)
+  initSocket "4245" >>= socketLoop onNewImg
 
 initX = do
   dpy <- X.openDisplay ""
@@ -115,17 +116,35 @@ initSocket port = withSocketsDo $ do
   listen sock 5
   return sock
 
-socketLoop onNewImg sock = do
-  (connsock, clientaddr) <- accept sock
-  forkIO $ procMessages connsock clientaddr
-  socketLoop onNewImg sock
-    where
-      procMessages connsock clientaddr = do
-        connhdl <- socketToHandle connsock ReadMode
-        hSetBuffering connhdl LineBuffering
-        messages <- hGetContents connhdl
-        mapM_ onNewImg (lines messages)
-        hClose connhdl
+data State = State {
+  stIdx :: Int,
+  stPlaylist :: [String]
+}
+
+currentImg (State idx ps)
+  | idx >= 0 && idx < length ps = Just (ps !! idx)
+  | otherwise = Nothing
+
+socketLoop onNewImg sock = (newMVar (State (-1) [])) >>= innerLoop
+  where
+    innerLoop state = do
+      (connsock, clientaddr) <- accept sock
+      forkIO $ processMessages state connsock clientaddr
+      innerLoop state
+    processMessages state connsock clientaddr = do
+      connhdl <- socketToHandle connsock ReadMode
+      hSetBuffering connhdl LineBuffering
+      messages <- hGetContents connhdl
+      mapM_ (runParseCmd state) (lines messages)
+      hClose connhdl
+    runParseCmd state c = modifyMVar_ state $ \s -> do
+      let s' = parseCmd c s
+          i = currentImg s'
+      when (i /= currentImg s) (onNewImg $ fromMaybe "" i)
+      return s'
+
+parseCmd :: String -> State -> State
+parseCmd _ s = s
 
 eventLoop imgPath dpy win = runErrorT (innerLoop Nothing Nothing) >> return ()
   where
