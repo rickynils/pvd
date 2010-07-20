@@ -17,3 +17,7 @@ Executable pvd
     CPP-Options: -DCALLTYPE=stdcall
   else
     CPP-Options: -DCALLTYPE=ccall
+
+Executable pvc
+  Build-Depends:   base >= 4, network
+  Main-Is:         Pvc.hs
