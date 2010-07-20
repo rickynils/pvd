@@ -1,21 +1,9 @@
 -- vim: syntax=haskell
 
 module Codec.Image.DevIL.Extras (
-  il_BGR,
-  il_BGRA,
-  ilBindImage,
-  ilDeleteImages,
-  ilGenImages,
-  ilGetDataC,
-  ilGetIntegerC,
-  il_IMAGE_BPP,
-  il_IMAGE_FORMAT,
-  il_IMAGE_HEIGHT,
-  il_IMAGE_WIDTH,
-  ilLoadImage,
-  il_RGB,
-  il_RGBA,
-  ImageName
+  Image (..),
+  loadImage,
+  unloadImage
 ) where
 
 import Control.Applicative
@@ -30,6 +18,7 @@ import Debug.Trace
 import Foreign.C
 import Foreign.C.Types
 import Foreign hiding (newArray)
+import Control.Monad.Error
 
 #include "IL/il.h"
 
@@ -51,6 +40,14 @@ il_IMAGE_BPP  = (#const IL_IMAGE_BPP)  :: ILenum
 il_IMAGE_FORMAT  = (#const IL_IMAGE_FORMAT)  :: ILenum
 
 newtype ImageName = ImageName { fromImageName :: ILuint }
+
+data Image = Image {
+  imgName   :: ImageName,
+  imgHeight :: Int,
+  imgWidth  :: Int,
+  imgBpp    :: Int,
+  imgData   :: StorableArray (Int,Int,Int) Word8
+}
 
 foreign import CALLTYPE "ilBindImage" ilBindImageC :: ILuint -> IO ()
 
@@ -87,3 +84,26 @@ ilDeleteImages names = do
     ar <- newListArray (0, length names-1) (fromImageName <$> names)
     withStorableArray ar $ \p -> do
         ilDeleteImagesC (fromIntegral $ length names) p
+
+unloadImage :: Image -> IO ()
+unloadImage img = ilDeleteImages [imgName img]
+
+loadImage :: String -> ErrorT String IO Image
+loadImage filePath = do
+  [name] <- lift $ ilGenImages 1
+  lift $ ilBindImage name
+  lift $ ilLoadImage filePath
+  cols <- fmap fromIntegral $ lift $ ilGetIntegerC il_IMAGE_WIDTH
+  rows <- fmap fromIntegral $ lift $ ilGetIntegerC il_IMAGE_HEIGHT
+  bpp  <- fmap fromIntegral $ lift $ ilGetIntegerC il_IMAGE_BPP
+  f    <- fmap fromIntegral $ lift $ ilGetIntegerC il_IMAGE_FORMAT
+  unless (cols > 1 && rows > 1) $ lift (ilDeleteImages [name]) >> fail ""
+  let bounds = ((0,0,0), (rows-1, cols-1, bpp-1))
+  ptr <- lift ilGetDataC
+  fptr <- lift $ newForeignPtr_ ptr
+  dat <- lift $ unsafeForeignPtrToStorableArray fptr bounds
+  return Image {
+    imgName = name, imgHeight = fromIntegral rows,
+    imgWidth = fromIntegral cols, imgBpp = fromIntegral bpp,
+    imgData = dat
+  }

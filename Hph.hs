@@ -4,8 +4,8 @@ module Main (
   main
 ) where
 
-import Codec.Image.DevIL.Extras
-import Codec.Image.DevIL (ilInit, readImage)
+import qualified Codec.Image.DevIL.Extras as IL
+import qualified Codec.Image.DevIL as IL (ilInit)
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
@@ -23,39 +23,11 @@ import Prelude hiding (notElem)
 import System.Exit (exitWith, ExitCode(..))
 import System.IO
 
-data Img = Img {
-  imgName   :: ImageName,
-  imgHeight :: Int,
-  imgWidth  :: Int,
-  imgBpp    :: Int,
-  imgData   :: StorableArray (Int,Int,Int) Word8
-}
-
 data XImg = XImg {
   xImg :: X.Image,
   xImgH :: Int,
   xImgW :: Int
 }
-
-loadImage :: String -> ErrorT String IO Img
-loadImage filePath = do
-  [name] <- lift $ ilGenImages 1
-  lift $ ilBindImage name
-  lift $ ilLoadImage filePath
-  cols <- lift $ ilGetIntegerC il_IMAGE_WIDTH
-  rows <- lift $ ilGetIntegerC il_IMAGE_HEIGHT
-  bpp  <- lift $ ilGetIntegerC il_IMAGE_BPP
-  f    <- lift $ ilGetIntegerC il_IMAGE_FORMAT
-  unless (cols > 1 && rows > 1) $ lift (ilDeleteImages [name]) >> fail ""
-  let bounds = ((0,0,0), (fromIntegral rows-1, fromIntegral cols-1, (fromIntegral bpp)-1))
-  ptr <- lift ilGetDataC
-  fptr <- lift $ newForeignPtr_ ptr
-  dat <- lift $ unsafeForeignPtrToStorableArray fptr bounds
-  return Img {
-    imgName = name, imgHeight = fromIntegral rows,
-    imgWidth = fromIntegral cols, imgBpp = fromIntegral bpp,
-    imgData = dat
-  }
 
 drawImg :: X.Display -> X.Window -> Maybe XImg -> IO ()
 drawImg dpy win ximg = do
@@ -83,20 +55,20 @@ initColor dpy color = do
   (apros,real) <- X.allocNamedColor dpy colormap color
   return $ X.color_pixel apros
 
-makeXImage :: X.Display -> Img -> IO XImg
+makeXImage :: X.Display -> IL.Image -> IO XImg
 makeXImage dpy img = do
-  xImgData <- mapIndices bs mapIdx (imgData img)
+  xImgData <- mapIndices bs mapIdx (IL.imgData img)
   withStorableArray xImgData (ci . castPtr)
   where
-    w = fromIntegral (imgWidth img)
-    h = fromIntegral (imgHeight img)
+    w = fromIntegral (IL.imgWidth img)
+    h = fromIntegral (IL.imgHeight img)
     ci p = do
       ximg <- X.createImage dpy vis depth X.zPixmap 0 p w h 32 0
-      return XImg { xImg = ximg, xImgH = imgHeight img, xImgW = imgWidth img }
+      return XImg { xImg = ximg, xImgH = IL.imgHeight img, xImgW = IL.imgWidth img }
     depth = X.defaultDepthOfScreen (X.defaultScreenOfDisplay dpy)
     vis = X.defaultVisual dpy (X.defaultScreen dpy)
-    bs = ((0,0,0), (imgHeight img - 1, imgWidth img - 1, 3))
-    mapIdx (y,x,c) = (imgHeight img - y - 1, imgWidth img - x - 1, c' c)
+    bs = ((0,0,0), (IL.imgHeight img - 1, IL.imgWidth img - 1, 3))
+    mapIdx (y,x,c) = (IL.imgHeight img - y - 1, IL.imgWidth img - x - 1, c' c)
       where
         c' 0 = 2
         c' 1 = 1
@@ -105,9 +77,9 @@ makeXImage dpy img = do
 
 loadXImg :: X.Display -> String -> ErrorT String IO XImg
 loadXImg dpy path = do
-  img <- loadImage path
+  img <- IL.loadImage path
   ximg <- lift $ makeXImage dpy img
-  lift $ ilDeleteImages [imgName img]
+  lift $ IL.unloadImage img
   return ximg
 
 main = do
@@ -126,7 +98,7 @@ initX = do
   win <- mkWin dpy rootw
   X.selectInput dpy win X.exposureMask
   X.mapWindow dpy win
-  ilInit
+  IL.ilInit
   return (dpy,win)
   where
     mkWin dpy rootw = do
