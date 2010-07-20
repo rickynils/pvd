@@ -1,13 +1,13 @@
-Name:           Hph
+Name:           Pvd
 Version:        0.1
 Author:         Rickard Nilsson
 Maintainer:     rickard.nilsson@telia.com
 Cabal-Version:  >= 1.2
 Build-Type:     Simple
 
-Executable hph
+Executable pvd
   Build-Depends:   base >= 4, array, X11, Codec-Image-DevIL, network, mtl
-  Main-Is:         Hph.hs
+  Main-Is:         Pvd.hs
   Other-Modules:   Codec.Image.DevIL.Extras
   Build-Tools:     hsc2hs
   Extensions:      ForeignFunctionInterface, CPP
