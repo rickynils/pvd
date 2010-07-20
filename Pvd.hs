@@ -4,107 +4,41 @@ module Main (
   main
 ) where
 
-import qualified Codec.Image.DevIL.Extras as IL
-import qualified Codec.Image.DevIL as IL (ilInit)
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Trans
-import Data.Array.Storable
-import Data.Foldable (for_, notElem)
+import Data.Foldable (notElem)
 import Data.Maybe
-import Data.Word (Word8)
-import Foreign hiding (newArray)
-import qualified Graphics.X11.Xlib as X
-import qualified Graphics.X11.Xlib.Extras as X
 import Network.Socket
 import Prelude hiding (notElem)
+import qualified Codec.Image.DevIL as IL (ilInit)
+import qualified Graphics.X11.Xlib as X
+import qualified Graphics.X11.Xlib.Extras as X
 import System.Exit (exitWith, ExitCode(..))
 import System.IO
+import XUtils
 
-data XImg = XImg {
-  xImg :: X.Image,
-  xImgH :: Int,
-  xImgW :: Int
+data State = State {
+  stIdx :: Int,
+  stPlaylist :: [String],
+  stDpy :: X.Display,
+  stWin :: X.Window
 }
 
-drawImg :: X.Display -> X.Window -> Maybe XImg -> IO ()
-drawImg dpy win ximg = do
-  bgcolor <- initColor dpy "#444444"
-  gc <- X.createGC dpy win
-  (_,_,_,winWidth,winHeight,_,_) <- X.getGeometry dpy win
-  let depth = X.defaultDepthOfScreen (X.defaultScreenOfDisplay dpy)
-  pixmap <- X.createPixmap dpy win winWidth winHeight depth
-  X.setForeground dpy gc bgcolor
-  X.fillRectangle dpy pixmap gc 0 0 winWidth winHeight
-  for_ ximg $ \xi -> do
-    let portWidth = fromIntegral (xImgW xi)
-        portHeight = fromIntegral (xImgH xi)
-        portX = fromIntegral ((winWidth-portWidth) `div` 2)
-        portY = fromIntegral ((winHeight-portHeight) `div` 2)
-    X.putImage dpy pixmap gc (xImg xi) 0 0 portX portY portWidth portHeight
-  X.copyArea dpy pixmap win gc 0 0 winWidth winHeight 0 0
-  X.freeGC dpy gc
-  X.freePixmap dpy pixmap
-  X.sync dpy True
-
-initColor :: X.Display -> String -> IO X.Pixel
-initColor dpy color = do
-  let colormap = X.defaultColormap dpy (X.defaultScreen dpy)
-  (apros,real) <- X.allocNamedColor dpy colormap color
-  return $ X.color_pixel apros
-
-makeXImage :: X.Display -> IL.Image -> IO XImg
-makeXImage dpy img = do
-  xImgData <- mapIndices bs mapIdx (IL.imgData img)
-  withStorableArray xImgData (ci . castPtr)
-  where
-    w = fromIntegral (IL.imgWidth img)
-    h = fromIntegral (IL.imgHeight img)
-    ci p = do
-      ximg <- X.createImage dpy vis depth X.zPixmap 0 p w h 32 0
-      return XImg { xImg = ximg, xImgH = IL.imgHeight img, xImgW = IL.imgWidth img }
-    depth = X.defaultDepthOfScreen (X.defaultScreenOfDisplay dpy)
-    vis = X.defaultVisual dpy (X.defaultScreen dpy)
-    bs = ((0,0,0), (IL.imgHeight img - 1, IL.imgWidth img - 1, 3))
-    mapIdx (y,x,c) = (IL.imgHeight img - y - 1, IL.imgWidth img - x - 1, c' c)
-      where
-        c' 0 = 2
-        c' 1 = 1
-        c' 2 = 0
-        c' 3 = 0
-
-loadXImg :: X.Display -> String -> ErrorT String IO XImg
-loadXImg dpy path = do
-  img <- IL.loadImage path
-  ximg <- lift $ makeXImage dpy img
-  lift $ IL.unloadImage img
-  return ximg
+stImg (State {stIdx = idx, stPlaylist = pl})
+  | idx >= 0 && idx < length pl = Just (pl !! idx)
+  | otherwise = Nothing
 
 main = do
-  imgPath <- newEmptyMVar
-  (dpy,win) <- initX
-  let onNewImg p = X.allocaXEvent $ \e -> do
-        putMVar imgPath p
-        X.setEventType e X.expose
-        X.sendEvent dpy win False X.noEventMask e
-        X.flush dpy
-  forkIO $ eventLoop imgPath dpy win
-  initSocket "4245" >>= socketLoop onNewImg
-
-initX = do
-  dpy <- X.openDisplay ""
-  rootw <- X.rootWindow dpy (X.defaultScreen dpy)
-  win <- mkWin dpy rootw
-  X.selectInput dpy win X.exposureMask
-  X.mapWindow dpy win
   IL.ilInit
-  return (dpy,win)
-  where
-    mkWin dpy rootw = do
-      col <- initColor dpy "#444444"
-      X.createSimpleWindow dpy rootw 0 0 100 100 1 col col
+  (dpy,win) <- initX
+  state <- newMVar $ State {
+    stIdx = -1, stPlaylist = [], stDpy = dpy, stWin = win
+  }
+  forkIO $ eventLoop state
+  initSocket "4245" >>= socketLoop state
 
 initSocket port = withSocketsDo $ do
   addrinfos <- getAddrInfo
@@ -116,43 +50,35 @@ initSocket port = withSocketsDo $ do
   listen sock 5
   return sock
 
-data State = State {
-  stIdx :: Int,
-  stPlaylist :: [String]
-}
+socketLoop state sock = do
+  (connsock, clientaddr) <- accept sock
+  forkIO $ processMessages state connsock clientaddr
+  socketLoop state sock
+    where
+      processMessages state connsock clientaddr = do
+        connhdl <- socketToHandle connsock ReadMode
+        hSetBuffering connhdl LineBuffering
+        messages <- hGetContents connhdl
+        mapM_ (runParseCmd state) (lines messages)
+        hClose connhdl
+      runParseCmd state c = do
+        (redraw,dpy,win) <- modifyMVar state $ \s -> do
+          let s' = parseCmd c s
+          return (s', (stImg s' /= stImg s, stDpy s', stWin s'))
+        when redraw $ sendExposeEvent dpy win
 
-currentImg (State idx ps)
-  | idx >= 0 && idx < length ps = Just (ps !! idx)
-  | otherwise = Nothing
-
-socketLoop onNewImg sock = (newMVar (State (-1) [])) >>= innerLoop
-  where
-    innerLoop state = do
-      (connsock, clientaddr) <- accept sock
-      forkIO $ processMessages state connsock clientaddr
-      innerLoop state
-    processMessages state connsock clientaddr = do
-      connhdl <- socketToHandle connsock ReadMode
-      hSetBuffering connhdl LineBuffering
-      messages <- hGetContents connhdl
-      mapM_ (runParseCmd state) (lines messages)
-      hClose connhdl
-    runParseCmd state c = modifyMVar_ state $ \s -> do
-      let s' = parseCmd c s
-          i = currentImg s'
-      when (i /= currentImg s) (onNewImg $ fromMaybe "" i)
-      return s'
-
-parseCmd :: String -> State -> State
-parseCmd _ s = s
-
-eventLoop imgPath dpy win = runErrorT (innerLoop Nothing Nothing) >> return ()
+eventLoop state = runErrorT (innerLoop Nothing Nothing) >> return ()
   where
     gNotElem e m = guard $ notElem e m
     innerLoop path ximg = do
-      path' <- lift $ tryTakeMVar imgPath
+      s <- lift $ readMVar state
+      let path' = stImg s
+          dpy = stDpy s
       ximg' <- flip mplus (return ximg)
         (do Just p <- return path; gNotElem p path; fmap Just $ loadXImg dpy p)
-      lift $ drawImg dpy win ximg'
+      lift $ drawImg dpy (stWin s) ximg'
       lift $ X.allocaXEvent $ \e -> X.nextEvent dpy e
       innerLoop path' ximg'
+
+parseCmd :: String -> State -> State
+parseCmd _ s = s
