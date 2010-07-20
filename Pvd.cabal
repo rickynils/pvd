@@ -19,5 +19,5 @@ Executable pvd
     CPP-Options: -DCALLTYPE=ccall
 
 Executable pvc
-  Build-Depends:   base >= 4, network
+  Build-Depends:   base >= 4, haskell98, network, containers
   Main-Is:         Pvc.hs
