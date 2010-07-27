@@ -10,7 +10,8 @@ import Control.Monad (when)
 import qualified Data.Map as Map
 
 data Flag =
-  FileList String | Port String | Add | Insert | Replace
+  FileList String | Port String | Host String | Add | Insert | Replace
+    deriving (Eq)
 
 data Command = Command {
   cmdStr :: String,
@@ -46,21 +47,43 @@ parseOptions cmd argv = case Map.lookup cmd commandMap of
 
 commonOptions =
   [ Option ['p'] ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
+  , Option ['h'] ["host"] (ReqArg Host "HOST") "photo viewer daemon host"
   ]
 
 commands =
   [ Command "playlist" playlistOpts playlistAct playlistUsage
+  , Command "next" [] nextAct nextUsage
+  , Command "prev" [] prevAct prevUsage
   ]
 
 commandMap = Map.fromList $ map (\c -> (cmdStr c, c)) commands
 
+sendCmdStr flags cmd = putStrLn $ "host: "++host++"\nport: "++port++"\n"++cmd
+  where
+    host = last [h | Host h <- Host "localhost" : flags]
+    port = last [p | Port p <- Port "4245" : flags]
+
+
 playlistOpts =
-  [ Option ['l'] ["filelist"] (ReqArg FileList "FILE") "a file that contains paths of the photos that should be added to the playlist"
+  [ Option ['l'] ["filelist"] (ReqArg FileList "FILE") "a playlist file"
   , Option ['a'] ["add"] (NoArg Add) "adds the selected files to the end of the current playlist"
   , Option ['r'] ["replace"] (NoArg Replace) "replaces the contents of the current playlist with the selected files"
   , Option ['i'] ["insert"] (NoArg Insert) "inserts the selected files first in the current playlist"
   ]
 
-playlistAct _ _ = return ()
+playlistAct flags files = sendCmdStr flags $ cmdStr++" "++filesStr
+  where
+    cmdStr | elem Replace flags = "playlist replace"
+           | elem Insert flags = "playlist insert 0"
+           | otherwise = "playlist add"
+    filesStr = unwords files
 
 playlistUsage = "[OPTIONS] [FILES]\n\n  Manages the current pvd playlist"
+
+nextAct flags _ = sendCmdStr flags "next"
+
+nextUsage = "\n\n  Shows the next photo in the playlist"
+
+prevAct flags _ = sendCmdStr flags "prev"
+
+prevUsage = "\n\n  Shows the previous photo in the playlist"
