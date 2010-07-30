@@ -25,7 +25,7 @@ data State = State {
   stPlaylist :: [String],
   stDpy :: X.Display,
   stWin :: X.Window
-}
+} deriving (Show)
 
 stImg (State {stIdx = idx, stPlaylist = pl})
   | idx >= 0 && idx < length pl = Just (pl !! idx)
@@ -75,7 +75,7 @@ eventLoop state = runErrorT (innerLoop Nothing Nothing) >> return ()
       let path' = stImg s
           dpy = stDpy s
       ximg' <- flip mplus (return ximg)
-        (do Just p <- return path; gNotElem p path; fmap Just $ loadXImg dpy p)
+        (do Just p <- return path'; gNotElem p path; fmap Just $ loadXImg dpy p)
       lift $ drawImg dpy (stWin s) ximg'
       lift $ X.allocaXEvent $ \e -> X.nextEvent dpy e
       innerLoop path' ximg'
