@@ -81,4 +81,11 @@ eventLoop state = runErrorT (innerLoop Nothing Nothing) >> return ()
       innerLoop path' ximg'
 
 parseCmd :: String -> State -> State
-parseCmd _ s = s
+parseCmd cmd s@(State {stIdx = idx, stPlaylist = pl}) = case words cmd of
+  ["next"] | idx+1 < length pl ->  s { stIdx = idx+1 }
+  ["prev"] | idx-1 >= 0 ->  s { stIdx = idx-1 }
+  "playlist":"add":imgs -> s { stPlaylist = pl++imgs }
+  "playlist":"replace":imgs -> s { stIdx = 0, stPlaylist = imgs }
+  "playlist":"insert":"0":imgs ->
+    s { stIdx = idx + (length imgs), stPlaylist = imgs++pl }
+  _ -> s
