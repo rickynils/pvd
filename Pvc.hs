@@ -8,6 +8,9 @@ import System (getArgs)
 import System.Console.GetOpt
 import Control.Monad (when)
 import qualified Data.Map as Map
+import Network.Socket
+import Network.BSD
+import System.IO
 
 data Flag =
   FileList String | Port String | Host String | Add | Insert | Replace
@@ -58,10 +61,17 @@ commands =
 
 commandMap = Map.fromList $ map (\c -> (cmdStr c, c)) commands
 
-sendCmdStr flags cmd = putStrLn $ "host: "++host++"\nport: "++port++"\n"++cmd
-  where
-    host = last [h | Host h <- Host "localhost" : flags]
-    port = last [p | Port p <- Port "4245" : flags]
+sendCmdStr flags cmd = do
+  addrinfos <- getAddrInfo Nothing (Just host) (Just port)
+  let serveraddr = head addrinfos
+  sock <- socket (addrFamily serveraddr) Stream defaultProtocol
+  connect sock (addrAddress serveraddr)
+  h <- socketToHandle sock WriteMode
+  hPutStrLn h cmd
+  hClose h
+    where
+      host = last [h | Host h <- Host "localhost" : flags]
+      port = last [p | Port p <- Port "4245" : flags]
 
 
 playlistOpts =
