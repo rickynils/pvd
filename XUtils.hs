@@ -34,7 +34,7 @@ initX = do
 
 drawImg :: X.Display -> X.Window -> Maybe XImg -> IO ()
 drawImg dpy win ximg = do
-  bgcolor <- initColor dpy "#444444"
+  bgcolor <- initColor dpy "#000000"
   gc <- X.createGC dpy win
   (_,_,_,winWidth,winHeight,_,_) <- X.getGeometry dpy win
   let depth = X.defaultDepthOfScreen (X.defaultScreenOfDisplay dpy)
@@ -71,7 +71,7 @@ makeXImage dpy img = do
     depth = X.defaultDepthOfScreen (X.defaultScreenOfDisplay dpy)
     vis = X.defaultVisual dpy (X.defaultScreen dpy)
     bs = ((0,0,0), (IL.imgHeight img - 1, IL.imgWidth img - 1, 3))
-    mapIdx (y,x,c) = (IL.imgHeight img - y - 1, IL.imgWidth img - x - 1, c' c)
+    mapIdx (y,x,c) = (IL.imgHeight img - y - 1, x, c' c)
       where
         c' 0 = 2
         c' 1 = 1
