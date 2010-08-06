@@ -29,8 +29,9 @@ initX = do
   return (dpy,win)
   where
     mkWin dpy rootw = do
+      attr <- X.getWindowAttributes dpy rootw
       col <- initColor dpy "#000000"
-      X.createSimpleWindow dpy rootw 0 0 100 100 1 col col
+      X.createSimpleWindow dpy rootw 0 0 (fromIntegral $ X.wa_width attr) (fromIntegral $ X.wa_height attr) 1 col col
 
 drawImg :: X.Display -> X.Window -> Maybe XImg -> IO ()
 drawImg dpy win ximg = do
