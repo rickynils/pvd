@@ -27,7 +27,8 @@ data State = State {
   stPlaylist :: [String],
   stDpy :: X.Display,
   stWin :: X.Window,
-  stImgCache :: M.Map String XImg
+  stImgCache :: M.Map String XImg,
+  stLoadLock :: MVar ()
 }
 
 stImg (State {stIdx = idx, stPlaylist = pl})
@@ -37,8 +38,10 @@ stImg (State {stIdx = idx, stPlaylist = pl})
 main = do
   IL.ilInit
   (dpy,win) <- initX
+  l <- newMVar ()
   state <- newMVar $ State {
-    stIdx = -1, stPlaylist = [], stDpy = dpy, stWin = win, stImgCache = M.empty
+    stIdx = -1, stPlaylist = [], stDpy = dpy, stWin = win, stImgCache = M.empty,
+    stLoadLock = l
   }
   forkIO $ eventLoop state
   initSocket "4245" >>= socketLoop state
@@ -68,34 +71,28 @@ socketLoop state sock = do
         (redraw,dpy,win) <- modifyMVar state $ \s -> do
           let s' = parseCmd c s
           return (s', (stImg s' /= stImg s, stDpy s', stWin s'))
-        when redraw $ sendExposeEvent dpy win -- >> updateCache state
+        when redraw $ sendExposeEvent dpy win >> updateCache state
 
 eventLoop state = do
   s <- readMVar state
-  img <- maybe (return Nothing) (cachePhoto state) (stImg s)
+  img <- maybe (return Nothing) (getImg state) (stImg s)
   drawImg (stDpy s) (stWin s) img
   X.allocaXEvent $ \e -> X.nextEvent (stDpy s) e
   eventLoop state
 
-getImg dpy c p = do
-  putStrLn $ show $ M.keys c
-  maybe (putStrLn ("loading " ++ p) >> loadXImg dpy p)
-    (\i -> return $ Just i) $ M.lookup p c
+getImg state p = do
+  State { stDpy = d, stImgCache = c, stLoadLock = l } <- readMVar state
+  img <- maybe (withMVar l (\_ -> loadXImg d p)) (return . Just) (M.lookup p c)
+  flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s ->
+    return (s {stImgCache = M.insert p i (stImgCache s)}, img)
 
 updateCache state = do
   s@(State {stIdx = idx, stPlaylist = pl}) <- readMVar state
-  let idxs = take 6 $ interleave (reverse [0 .. idx]) [idx + 1, length pl - 1]
+  let idxs = take 8 $ interleave (reverse [0 .. idx]) [idx+1 .. length pl - 1]
       interleave (x:xs) (y:ys) = x:y:(interleave xs ys)
       interleave xs ys = xs++ys
       ps = map (pl !!) idxs
-  sequence_ $ map (\p -> forkIO $ cachePhoto state p >> return ()) ps
-
-cachePhoto state p = do
-  s <- readMVar state
-  img <- getImg (stDpy s) (stImgCache s) p
-  flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s -> do
-    let s' = s { stImgCache = M.insert p i (stImgCache s) }
-    return (s', img)
+  sequence_ $ map (\p -> forkIO $ getImg state p >> return ()) ps
 
 parseCmd :: String -> State -> State
 parseCmd cmd s@(State {stIdx = idx, stPlaylist = pl}) = case words cmd of
