@@ -7,6 +7,7 @@ module Main (
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
+import Control.Applicative
 import Control.Monad.Error
 import Control.Monad.Trans
 import Data.Foldable (notElem)
@@ -16,6 +17,7 @@ import Prelude hiding (notElem)
 import qualified Codec.Image.DevIL as IL (ilInit)
 import qualified Graphics.X11.Xlib as X
 import qualified Graphics.X11.Xlib.Extras as X
+import qualified Data.Map as M
 import System.Exit (exitWith, ExitCode(..))
 import System.IO
 import XUtils
@@ -24,8 +26,9 @@ data State = State {
   stIdx :: Int,
   stPlaylist :: [String],
   stDpy :: X.Display,
-  stWin :: X.Window
-} deriving (Show)
+  stWin :: X.Window,
+  stImgCache :: M.Map String XImg
+}
 
 stImg (State {stIdx = idx, stPlaylist = pl})
   | idx >= 0 && idx < length pl = Just (pl !! idx)
@@ -35,7 +38,7 @@ main = do
   IL.ilInit
   (dpy,win) <- initX
   state <- newMVar $ State {
-    stIdx = -1, stPlaylist = [], stDpy = dpy, stWin = win
+    stIdx = -1, stPlaylist = [], stDpy = dpy, stWin = win, stImgCache = M.empty
   }
   forkIO $ eventLoop state
   initSocket "4245" >>= socketLoop state
@@ -52,40 +55,55 @@ initSocket port = withSocketsDo $ do
 
 socketLoop state sock = do
   (connsock, clientaddr) <- accept sock
-  forkIO $ processMessages state connsock clientaddr
+  forkIO $ processMessages connsock clientaddr
   socketLoop state sock
     where
-      processMessages state connsock clientaddr = do
+      processMessages connsock clientaddr = do
         connhdl <- socketToHandle connsock ReadMode
         hSetBuffering connhdl LineBuffering
         messages <- hGetContents connhdl
-        mapM_ (runParseCmd state) (lines messages)
+        mapM_ runParseCmd (lines messages)
         hClose connhdl
-      runParseCmd state c = do
+      runParseCmd c = do
         (redraw,dpy,win) <- modifyMVar state $ \s -> do
           let s' = parseCmd c s
           return (s', (stImg s' /= stImg s, stDpy s', stWin s'))
-        when redraw $ sendExposeEvent dpy win
+        when redraw $ sendExposeEvent dpy win -- >> updateCache state
 
-eventLoop state = runErrorT (innerLoop Nothing Nothing) >> return ()
-  where
-    gNotElem e m = guard $ notElem e m
-    innerLoop path ximg = do
-      s <- lift $ readMVar state
-      let path' = stImg s
-          dpy = stDpy s
-      ximg' <- flip mplus (return ximg)
-        (do Just p <- return path'; gNotElem p path; fmap Just $ loadXImg dpy p)
-      lift $ drawImg dpy (stWin s) ximg'
-      lift $ X.allocaXEvent $ \e -> X.nextEvent dpy e
-      innerLoop path' ximg'
+eventLoop state = do
+  s <- readMVar state
+  img <- maybe (return Nothing) (cachePhoto state) (stImg s)
+  drawImg (stDpy s) (stWin s) img
+  X.allocaXEvent $ \e -> X.nextEvent (stDpy s) e
+  eventLoop state
+
+getImg dpy c p = do
+  putStrLn $ show $ M.keys c
+  maybe (putStrLn ("loading " ++ p) >> loadXImg dpy p)
+    (\i -> return $ Just i) $ M.lookup p c
+
+updateCache state = do
+  s@(State {stIdx = idx, stPlaylist = pl}) <- readMVar state
+  let idxs = take 6 $ interleave (reverse [0 .. idx]) [idx + 1, length pl - 1]
+      interleave (x:xs) (y:ys) = x:y:(interleave xs ys)
+      interleave xs ys = xs++ys
+      ps = map (pl !!) idxs
+  sequence_ $ map (\p -> forkIO $ cachePhoto state p >> return ()) ps
+
+cachePhoto state p = do
+  s <- readMVar state
+  img <- getImg (stDpy s) (stImgCache s) p
+  flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s -> do
+    let s' = s { stImgCache = M.insert p i (stImgCache s) }
+    return (s', img)
 
 parseCmd :: String -> State -> State
 parseCmd cmd s@(State {stIdx = idx, stPlaylist = pl}) = case words cmd of
   ["next"] | idx+1 < length pl ->  s { stIdx = idx+1 }
   ["prev"] | idx-1 >= 0 ->  s { stIdx = idx-1 }
   "playlist":"add":imgs -> s { stPlaylist = pl++imgs }
-  "playlist":"replace":imgs -> s { stIdx = 0, stPlaylist = imgs }
+  "playlist":"replace":imgs ->
+    s { stIdx = 0, stPlaylist = imgs, stImgCache = M.empty }
   "playlist":"insert":"0":imgs ->
     s { stIdx = idx + (length imgs), stPlaylist = imgs++pl }
   _ -> s

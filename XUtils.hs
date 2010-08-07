@@ -2,7 +2,8 @@ module XUtils (
   initX,
   drawImg,
   sendExposeEvent,
-  loadXImg
+  loadXImg,
+  XImg
 ) where
 
 import Control.Monad.Error
@@ -16,6 +17,7 @@ import qualified Graphics.X11.Xlib.Extras as X
 
 data XImg = XImg {
   xImg :: X.Image,
+  xImgData :: StorableArray (Int,Int,Int) Word8,
   xImgH :: Int,
   xImgW :: Int
 }
@@ -62,13 +64,14 @@ initColor dpy color = do
 makeXImage :: X.Display -> IL.Image -> IO XImg
 makeXImage dpy img = do
   xImgData <- mapIndices bs mapIdx (IL.imgData img)
-  withStorableArray xImgData (ci . castPtr)
+  withStorableArray xImgData (ci xImgData . castPtr)
   where
     w = fromIntegral (IL.imgWidth img)
     h = fromIntegral (IL.imgHeight img)
-    ci p = do
+    ci imgdata p = do
       ximg <- X.createImage dpy vis depth X.zPixmap 0 p w h 32 0
-      return XImg { xImg = ximg, xImgH = IL.imgHeight img, xImgW = IL.imgWidth img }
+      return XImg { xImgData = imgdata, xImg = ximg, xImgH = IL.imgHeight img,
+        xImgW = IL.imgWidth img }
     depth = X.defaultDepthOfScreen (X.defaultScreenOfDisplay dpy)
     vis = X.defaultVisual dpy (X.defaultScreen dpy)
     bs = ((0,0,0), (IL.imgHeight img - 1, IL.imgWidth img - 1, 3))
@@ -79,12 +82,13 @@ makeXImage dpy img = do
         c' 2 = 0
         c' 3 = 0
 
-loadXImg :: X.Display -> String -> ErrorT String IO XImg
+loadXImg :: X.Display -> String -> IO (Maybe XImg)
 loadXImg dpy path = do
   img <- IL.loadImage path
-  ximg <- lift $ makeXImage dpy img
-  lift $ IL.unloadImage img
-  return ximg
+  flip (maybe (return Nothing)) img $ \i -> do
+    ximg <- makeXImage dpy i
+    IL.unloadImage i
+    return $ Just ximg
 
 sendExposeEvent dpy win = X.allocaXEvent $ \e -> do
   X.setEventType e X.expose

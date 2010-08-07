@@ -88,22 +88,26 @@ ilDeleteImages names = do
 unloadImage :: Image -> IO ()
 unloadImage img = ilDeleteImages [imgName img]
 
-loadImage :: String -> ErrorT String IO Image
+loadImage :: String -> IO (Maybe Image)
 loadImage filePath = do
-  [name] <- lift $ ilGenImages 1
-  lift $ ilBindImage name
-  lift $ ilLoadImage filePath
-  cols <- fmap fromIntegral $ lift $ ilGetIntegerC il_IMAGE_WIDTH
-  rows <- fmap fromIntegral $ lift $ ilGetIntegerC il_IMAGE_HEIGHT
-  bpp  <- fmap fromIntegral $ lift $ ilGetIntegerC il_IMAGE_BPP
-  f    <- fmap fromIntegral $ lift $ ilGetIntegerC il_IMAGE_FORMAT
-  unless (cols > 1 && rows > 1) $ lift (ilDeleteImages [name]) >> fail ""
-  let bounds = ((0,0,0), (rows-1, cols-1, bpp-1))
-  ptr <- lift ilGetDataC
-  fptr <- lift $ newForeignPtr_ ptr
-  dat <- lift $ unsafeForeignPtrToStorableArray fptr bounds
-  return Image {
-    imgName = name, imgHeight = fromIntegral rows,
-    imgWidth = fromIntegral cols, imgBpp = fromIntegral bpp,
-    imgData = dat
-  }
+  [name] <- ilGenImages 1
+  ilBindImage name
+  ilLoadImage filePath
+  cols <- fmap fromIntegral $ ilGetIntegerC il_IMAGE_WIDTH
+  rows <- fmap fromIntegral $ ilGetIntegerC il_IMAGE_HEIGHT
+  bpp  <- fmap fromIntegral $ ilGetIntegerC il_IMAGE_BPP
+  f    <- fmap fromIntegral $ ilGetIntegerC il_IMAGE_FORMAT
+  if (cols <= 1 || rows <= 1)
+    then do
+      ilDeleteImages [name]
+      return Nothing
+    else do
+      let bounds = ((0,0,0), (rows-1, cols-1, bpp-1))
+      ptr <- ilGetDataC
+      fptr <- newForeignPtr_ ptr
+      dat <- unsafeForeignPtrToStorableArray fptr bounds
+      return $ Just $ Image {
+        imgName = name, imgHeight = fromIntegral rows,
+        imgWidth = fromIntegral cols, imgBpp = fromIntegral bpp,
+        imgData = dat
+      }
