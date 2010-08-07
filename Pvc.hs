@@ -83,9 +83,9 @@ playlistOpts =
 
 playlistAct flags files = sendCmdStr flags $ cmdStr++" "++filesStr
   where
-    cmdStr | elem Replace flags = "playlist replace"
+    cmdStr | elem Add flags = "playlist add"
            | elem Insert flags = "playlist insert 0"
-           | otherwise = "playlist add"
+           | otherwise = "playlist replace"
     filesStr = unwords files
 
 playlistUsage = "[OPTIONS] [FILES]\n\n  Manages the current pvd playlist"
