@@ -70,7 +70,7 @@ sendCmdStr flags cmd = do
   hPutStrLn h cmd
   hClose h
     where
-      host = last [h | Host h <- Host "localhost" : flags]
+      host = last [h | Host h <- Host "127.0.0.1" : flags]
       port = last [p | Port p <- Port "4245" : flags]
 
 
