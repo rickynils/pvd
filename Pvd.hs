@@ -86,13 +86,10 @@ getImg state p = do
   flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s ->
     return (s {stImgCache = M.insert p i (stImgCache s)}, img)
 
-updateCache state = do
-  s@(State {stIdx = idx, stPlaylist = pl}) <- readMVar state
-  let idxs = take 8 $ interleave (reverse [0 .. idx]) [idx+1 .. length pl - 1]
-      interleave (x:xs) (y:ys) = x:y:(interleave xs ys)
-      interleave xs ys = xs++ys
-      ps = map (pl !!) idxs
-  sequence_ $ map (\p -> forkIO $ getImg state p >> return ()) ps
+updateCache st = do
+  s@(State {stIdx = idx, stPlaylist = pl}) <- readMVar st
+  forkIO $ sequence_ $ map (getImg st . (pl !!)) $ take 4 [idx .. length pl - 1]
+  return ()
 
 parseCmd :: String -> State -> State
 parseCmd cmd s@(State {stIdx = idx, stPlaylist = pl}) = case words cmd of
