@@ -17,17 +17,18 @@ import Prelude hiding (notElem)
 import qualified Codec.Image.DevIL as IL (ilInit)
 import qualified Graphics.X11.Xlib as X
 import qualified Graphics.X11.Xlib.Extras as X
-import qualified Data.Map as M
 import System.Exit (exitWith, ExitCode(..))
 import System.IO
 import XUtils
+
+cacheSize = 15
 
 data State = State {
   stIdx :: Int,
   stPlaylist :: [String],
   stDpy :: X.Display,
   stWin :: X.Window,
-  stImgCache :: M.Map String XImg,
+  stImgCache :: [(String, XImg)],
   stLoadLock :: MVar ()
 }
 
@@ -40,7 +41,7 @@ main = do
   (dpy,win) <- initX
   l <- newMVar ()
   state <- newMVar $ State {
-    stIdx = -1, stPlaylist = [], stDpy = dpy, stWin = win, stImgCache = M.empty,
+    stIdx = -1, stPlaylist = [], stDpy = dpy, stWin = win, stImgCache = [],
     stLoadLock = l
   }
   forkIO $ eventLoop state
@@ -82,9 +83,10 @@ eventLoop state = do
 
 getImg state p = do
   State { stDpy = d, stImgCache = c, stLoadLock = l } <- readMVar state
-  img <- maybe (withMVar l (\_ -> loadXImg d p)) (return . Just) (M.lookup p c)
-  flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s ->
-    return (s {stImgCache = M.insert p i (stImgCache s)}, img)
+  img <- maybe (withMVar l (\_ -> loadXImg d p)) (return . Just) (lookup p c)
+  flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s -> do
+    let c' = (p,i) : (take (cacheSize-1) $ filter ((/=) p . fst) (stImgCache s))
+    return (s {stImgCache = c'}, img)
 
 updateCache st = do
   s@(State {stIdx = idx, stPlaylist = pl}) <- readMVar st
@@ -97,7 +99,7 @@ parseCmd cmd s@(State {stIdx = idx, stPlaylist = pl}) = case words cmd of
   ["prev"] | idx-1 >= 0 ->  s { stIdx = idx-1 }
   "playlist":"add":imgs -> s { stPlaylist = pl++imgs }
   "playlist":"replace":imgs ->
-    s { stIdx = 0, stPlaylist = imgs, stImgCache = M.empty }
+    s { stIdx = 0, stPlaylist = imgs, stImgCache = [] }
   "playlist":"insert":"0":imgs ->
     s { stIdx = idx + (length imgs), stPlaylist = imgs++pl }
   _ -> s
