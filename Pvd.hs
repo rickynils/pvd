@@ -19,9 +19,13 @@ import qualified Graphics.X11.Xlib as X
 import qualified Graphics.X11.Xlib.Extras as X
 import System.Exit (exitWith, ExitCode(..))
 import System.IO
+import System (getArgs)
+import System.Console.GetOpt
 import XUtils
 
-cacheSize = 15
+data Flag =
+  Port String | CacheSize Int
+    deriving (Eq)
 
 data State = State {
   stIdx :: Int,
@@ -29,7 +33,8 @@ data State = State {
   stDpy :: X.Display,
   stWin :: X.Window,
   stImgCache :: [(String, XImg)],
-  stLoadLock :: MVar ()
+  stLoadLock :: MVar (),
+  stImgCacheSize :: Int
 }
 
 stImg (State {stIdx = idx, stPlaylist = pl})
@@ -37,15 +42,33 @@ stImg (State {stIdx = idx, stPlaylist = pl})
   | otherwise = Nothing
 
 main = do
+  args <- getArgs
+  (flags, files) <- parseOptions args
+  let cacheSize = last [c | CacheSize c <- CacheSize 15 : flags]
+      port = last [p | Port p <- Port "4245" : flags]
   IL.ilInit
   (dpy,win) <- initX
   l <- newMVar ()
   state <- newMVar $ State {
-    stIdx = -1, stPlaylist = [], stDpy = dpy, stWin = win, stImgCache = [],
-    stLoadLock = l
+    stIdx = -1, stPlaylist = files, stDpy = dpy, stWin = win,
+    stImgCache = [], stLoadLock = l, stImgCacheSize = cacheSize
   }
   forkIO $ eventLoop state
-  initSocket "4245" >>= socketLoop state
+  initSocket port >>= socketLoop state
+
+usageError msg = do
+  putStrLn "Usage:\n  pvd [OPTIONS] [FILES]\n"
+  putStrLn (usageInfo "Available options:" commonOptions)
+  fail msg
+
+commonOptions =
+  [ Option ['p'] ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
+  , Option ['c'] ["cache"] (ReqArg (CacheSize . read) "CACHESIZE") "photo cache size"
+  ]
+
+parseOptions argv = case getOpt Permute commonOptions argv of
+  (o,n,[]  ) -> return (o, n)
+  (_,_,errs) -> usageError (concat $ map (filter ('\n' /=)) errs)
 
 initSocket port = withSocketsDo $ do
   addrinfos <- getAddrInfo
@@ -86,6 +109,7 @@ getImg state p = do
   img <- maybe (withMVar l (\_ -> loadXImg d p)) (return . Just) (lookup p c)
   flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s -> do
     let c' = (p,i) : (take (cacheSize-1) $ filter ((/=) p . fst) (stImgCache s))
+        cacheSize = stImgCacheSize s
     return (s {stImgCache = c'}, img)
 
 updateCache st = do
