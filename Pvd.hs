@@ -24,7 +24,7 @@ import System.Console.GetOpt
 import XUtils
 
 data Flag =
-  Port String | CacheSize Int
+  Port String | CacheSize Int | Playlist String
     deriving (Eq)
 
 data State = State {
@@ -43,18 +43,23 @@ stImg (State {stIdx = idx, stPlaylist = pl})
 
 main = do
   args <- getArgs
-  (flags, files) <- parseOptions args
+  (flags, files1) <- parseOptions args
+  files2 <- readPlaylist flags
   let cacheSize = last [c | CacheSize c <- CacheSize 15 : flags]
       port = last [p | Port p <- Port "4245" : flags]
   IL.ilInit
   (dpy,win) <- initX
   l <- newMVar ()
   state <- newMVar $ State {
-    stIdx = -1, stPlaylist = files, stDpy = dpy, stWin = win,
+    stIdx = -1, stPlaylist = files1++files2, stDpy = dpy, stWin = win,
     stImgCache = [], stLoadLock = l, stImgCacheSize = cacheSize
   }
   forkIO $ eventLoop state
   initSocket port >>= socketLoop state
+
+readPlaylist [] = return []
+readPlaylist ((Playlist pl):fs) = fmap words (readFile pl)
+readPlaylist (f:fs) = readPlaylist fs
 
 usageError msg = do
   putStrLn "Usage:\n  pvd [OPTIONS] [FILES]\n"
@@ -64,6 +69,7 @@ usageError msg = do
 commonOptions =
   [ Option ['p'] ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
   , Option ['c'] ["cache"] (ReqArg (CacheSize . read) "CACHESIZE") "photo cache size"
+  , Option ['l'] ["playlist"] (ReqArg Playlist "PLAYLIST") "playlist file"
   ]
 
 parseOptions argv = case getOpt Permute commonOptions argv of
