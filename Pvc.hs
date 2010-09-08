@@ -13,7 +13,7 @@ import Network.BSD
 import System.IO
 
 data Flag =
-  FileList String | Port String | Host String | Add | Insert | Replace
+  Playlist String | Port String | Host String | Add | Insert | Replace
     deriving (Eq)
 
 data Command = Command {
@@ -75,18 +75,23 @@ sendCmdStr flags cmd = do
 
 
 playlistOpts =
-  [ Option ['l'] ["filelist"] (ReqArg FileList "FILE") "a playlist file"
+  [ Option ['l'] ["filelist"] (ReqArg Playlist "PLAYLIST") "playlist file"
   , Option ['a'] ["add"] (NoArg Add) "adds the selected files to the end of the current playlist"
   , Option ['r'] ["replace"] (NoArg Replace) "replaces the contents of the current playlist with the selected files"
   , Option ['i'] ["insert"] (NoArg Insert) "inserts the selected files first in the current playlist"
   ]
 
-playlistAct flags files = sendCmdStr flags $ cmdStr++" "++filesStr
+playlistAct flags files1 = do
+  files2 <- readPlaylist flags
+  sendCmdStr flags $ cmdStr++" "++(unwords $ files1++files2)
   where
     cmdStr | elem Add flags = "playlist add"
            | elem Insert flags = "playlist insert 0"
            | otherwise = "playlist replace"
-    filesStr = unwords files
+
+readPlaylist [] = return []
+readPlaylist ((Playlist pl):fs) = fmap words (readFile pl)
+readPlaylist (f:fs) = readPlaylist fs
 
 playlistUsage = "[OPTIONS] [FILES]\n\n  Manages the current pvd playlist"
 
