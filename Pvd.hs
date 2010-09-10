@@ -37,7 +37,7 @@ data State = State {
   stImgCacheSize :: Int
 }
 
-stImg (State {stIdx = idx, stPlaylist = pl})
+imgPath (State {stIdx = idx, stPlaylist = pl})
   | idx >= 0 && idx < length pl = Just (pl !! idx)
   | otherwise = Nothing
 
@@ -63,16 +63,16 @@ readPlaylist (f:fs) = readPlaylist fs
 
 usageError msg = do
   putStrLn "Usage:\n  pvd [OPTIONS] [FILES]\n"
-  putStrLn (usageInfo "Available options:" commonOptions)
+  putStrLn (usageInfo "Available options:" options)
   fail msg
 
-commonOptions =
+options =
   [ Option ['p'] ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
-  , Option ['c'] ["cache"] (ReqArg (CacheSize . read) "CACHESIZE") "photo cache size"
+  , Option ['c'] ["cache"] (ReqArg (CacheSize . read) "SIZE") "photo cache size"
   , Option ['l'] ["playlist"] (ReqArg Playlist "PLAYLIST") "playlist file"
   ]
 
-parseOptions argv = case getOpt Permute commonOptions argv of
+parseOptions argv = case getOpt Permute options argv of
   (o,n,[]  ) -> return (o, n)
   (_,_,errs) -> usageError (concat $ map (filter ('\n' /=)) errs)
 
@@ -100,12 +100,12 @@ socketLoop state sock = do
       runParseCmd c = do
         (redraw,dpy,win) <- modifyMVar state $ \s -> do
           let s' = parseCmd c s
-          return (s', (stImg s' /= stImg s, stDpy s', stWin s'))
+          return (s', (imgPath s' /= imgPath s, stDpy s', stWin s'))
         when redraw $ sendExposeEvent dpy win >> updateCache state
 
 eventLoop state = do
   s <- readMVar state
-  img <- maybe (return Nothing) (getImg state) (stImg s)
+  img <- maybe (return Nothing) (getImg state) (imgPath s)
   drawImg (stDpy s) (stWin s) img
   X.allocaXEvent $ \e -> X.nextEvent (stDpy s) e
   eventLoop state
