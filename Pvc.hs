@@ -57,6 +57,8 @@ commands =
   [ Command "playlist" playlistOpts playlistAct playlistUsage
   , Command "next" [] nextAct nextUsage
   , Command "prev" [] prevAct prevUsage
+  , Command "first" [] firstAct firstUsage
+  , Command "last" [] lastAct lastUsage
   ]
 
 commandMap = Map.fromList $ map (\c -> (cmdStr c, c)) commands
@@ -102,3 +104,11 @@ nextUsage = "\n\n  Shows the next photo in the playlist"
 prevAct flags _ = sendCmdStr flags "prev"
 
 prevUsage = "\n\n  Shows the previous photo in the playlist"
+
+firstAct flags _ = sendCmdStr flags "first"
+
+firstUsage = "\n\n  Shows the first photo in the playlist"
+
+lastAct flags _ = sendCmdStr flags "last"
+
+lastUsage = "\n\n  Shows the last photo in the playlist"

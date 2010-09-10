@@ -51,7 +51,7 @@ main = do
   (dpy,win) <- initX
   l <- newMVar ()
   state <- newMVar $ State {
-    stIdx = -1, stPlaylist = files1++files2, stDpy = dpy, stWin = win,
+    stIdx = 0, stPlaylist = files1++files2, stDpy = dpy, stWin = win,
     stImgCache = [], stLoadLock = l, stImgCacheSize = cacheSize
   }
   forkIO $ eventLoop state
@@ -120,16 +120,23 @@ getImg state p = do
 
 updateCache st = do
   s@(State {stIdx = idx, stPlaylist = pl}) <- readMVar st
-  forkIO $ sequence_ $ map (getImg st . (pl !!)) $ take 4 [idx .. length pl - 1]
+  let idxs = take 5 [max 0 (idx-2) .. length pl - 1]
+  forkIO $ sequence_ $ map (getImg st . (pl !!)) idxs
   return ()
 
 parseCmd :: String -> State -> State
 parseCmd cmd s@(State {stIdx = idx, stPlaylist = pl}) = case words cmd of
-  ["next"] | idx+1 < length pl ->  s { stIdx = idx+1 }
-  ["prev"] | idx-1 >= 0 ->  s { stIdx = idx-1 }
+  ["next"] -> gotoIdx s (idx+1)
+  ["prev"] -> gotoIdx s (idx-1)
+  ["first"] -> gotoIdx s 0
+  ["last"] -> gotoIdx s (length pl - 1)
   "playlist":"add":imgs -> s { stPlaylist = pl++imgs }
   "playlist":"replace":imgs ->
     s { stIdx = 0, stPlaylist = imgs, stImgCache = [] }
   "playlist":"insert":"0":imgs ->
     s { stIdx = idx + (length imgs), stPlaylist = imgs++pl }
   _ -> s
+
+gotoIdx s@(State {stPlaylist = pl}) n
+  | n >= 0 && n < (length pl) = s { stIdx = n }
+  | otherwise = s
