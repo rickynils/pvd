@@ -54,6 +54,7 @@ main = do
     stIdx = 0, stPlaylist = files1++files2, stDpy = dpy, stWin = win,
     stImgCache = [], stLoadLock = l, stImgCacheSize = cacheSize
   }
+  updateCache state
   forkIO $ eventLoop state
   initSocket port >>= socketLoop state
 
