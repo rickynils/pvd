@@ -58,9 +58,7 @@ main = do
   forkIO $ eventLoop state
   initSocket port >>= socketLoop state
 
-readPlaylist [] = return []
-readPlaylist ((Playlist pl):fs) = fmap words (readFile pl)
-readPlaylist (f:fs) = readPlaylist fs
+readPlaylist fs = fmap (concat . map words) $ sequence [readFile pl | (Playlist pl) <- fs]
 
 usageError msg = do
   putStrLn "Usage:\n  pvd [OPTIONS] [FILES]\n"

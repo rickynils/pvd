@@ -90,10 +90,7 @@ playlistAct flags files1 = do
     cmdStr | elem Add flags = "playlist add"
            | elem Insert flags = "playlist insert 0"
            | otherwise = "playlist replace"
-
-readPlaylist [] = return []
-readPlaylist ((Playlist pl):fs) = fmap words (readFile pl)
-readPlaylist (f:fs) = readPlaylist fs
+    readPlaylist fs = fmap (concat . map words) $ sequence [readFile pl | (Playlist pl) <- fs]
 
 playlistUsage = "[OPTIONS] [FILES]\n\n  Manages the current pvd playlist"
 
