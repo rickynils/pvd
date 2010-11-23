@@ -29,17 +29,24 @@ main = do
   (cmd, flags, files) <- parseOptions (head args) (tail args)
   cmd flags files
 
-usageError Nothing msg = do
-  putStrLn "Usage:\n  pvc COMMAND [OPTIONS]\n"
+printHelp = do
+  putStrLn "Usage:\n  pvc <COMMAND> [OPTION...]\n"
+  putStrLn "Photo Viewer Client - a client for controlling pvd (Photo Viewer Daemon).\n"
   putStrLn (usageInfo "Options valid for all commands:" commonOptions)
   putStrLn "Available commands:"
   putStrLn $ unlines $ map ("  "++) (Map.keys commandMap)
-  fail msg
 
-usageError (Just (Command cn opts _ usage)) msg = do
+printCmdHelp (Command cn opts _ usage) = do
   putStrLn ("Usage:\n  pvc "++cn++" "++usage++"\n")
   putStrLn (usageInfo "Options valid for all commands:" commonOptions)
   putStrLn (usageInfo ("Options valid for command \""++cn++"\":") opts)
+
+usageError Nothing msg = do
+  printHelp
+  fail msg
+
+usageError (Just cmd) msg = do
+  printCmdHelp cmd
   fail msg
 
 parseOptions cmd argv = case Map.lookup cmd commandMap of
@@ -59,6 +66,7 @@ commands =
   , Command "prev" [] prevAct prevUsage
   , Command "first" [] firstAct firstUsage
   , Command "last" [] lastAct lastUsage
+  , Command "help" [] helpAct helpUsage
   ]
 
 commandMap = Map.fromList $ map (\c -> (cmdStr c, c)) commands
@@ -75,6 +83,14 @@ sendCmdStr flags cmd = do
       host = last [h | Host h <- Host "127.0.0.1" : flags]
       port = last [p | Port p <- Port "4245" : flags]
 
+
+helpAct _ [] = printHelp
+helpAct _ (c:[]) = case Map.lookup c commandMap of
+  Just cmd -> printCmdHelp cmd
+  Nothing  -> printHelp
+helpAct _ _ = printCmdHelp (commandMap Map.! "help")
+
+helpUsage = "<CMD>\n\n  Prints help text for the given command"
 
 playlistOpts =
   [ Option ['l'] ["filelist"] (ReqArg Playlist "PLAYLIST") "playlist file"

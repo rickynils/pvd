@@ -17,14 +17,14 @@ import Prelude hiding (notElem)
 import qualified Codec.Image.DevIL as IL (ilInit)
 import qualified Graphics.X11.Xlib as X
 import qualified Graphics.X11.Xlib.Extras as X
-import System.Exit (exitWith, ExitCode(..))
+import System.Exit (exitSuccess)
 import System.IO
 import System (getArgs)
 import System.Console.GetOpt
 import XUtils
 
 data Flag =
-  Port String | CacheSize Int | Playlist String
+  Port String | CacheSize Int | Playlist String | Help
     deriving (Eq)
 
 data State = State {
@@ -60,20 +60,22 @@ main = do
 
 readPlaylist fs = fmap (concat . map words) $ sequence [readFile pl | (Playlist pl) <- fs]
 
-usageError msg = do
-  putStrLn "Usage:\n  pvd [OPTIONS] [FILES]\n"
-  putStrLn (usageInfo "Available options:" options)
-  fail msg
+printHelp = sequence_ $ map putStrLn $
+  [ "Usage:\n  pvd [OPTION...] [FILE...]\n"
+  , "Photo Viewer Daemon - a daemon for viewing photos.\n"
+  , (usageInfo "Available options:" options)
+  ]
 
 options =
-  [ Option ['p'] ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
+  [ Option ['h'] ["help"] (NoArg Help) "print this help text"
+  , Option ['p'] ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
   , Option ['c'] ["cache"] (ReqArg (CacheSize . read) "SIZE") "photo cache size"
   , Option ['l'] ["playlist"] (ReqArg Playlist "PLAYLIST") "playlist file"
   ]
 
 parseOptions argv = case getOpt Permute options argv of
-  (o,n,[]  ) -> return (o, n)
-  (_,_,errs) -> usageError (concat $ map (filter ('\n' /=)) errs)
+  (o,n,[]  ) -> if elem Help o then printHelp >> exitSuccess else return (o, n)
+  (_,_,errs) -> printHelp >> fail (concat $ map (filter ('\n' /=)) errs)
 
 initSocket port = withSocketsDo $ do
   addrinfos <- getAddrInfo
