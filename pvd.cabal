@@ -1,7 +1,7 @@
 Name:                pvd
 Version:             1.0.0
 
-Synopsis:            A daemon application with remote controlling abilities for displaying photos in a fullscreen X11 window.
+Synopsis:            A photo viewer daemon application with remote controlling abilities.
 
 Description:         pvd, Photo Viewer Daemon, is an image viewer application that displays a fullscreen X11 window and listens for remote commands over TCP. The project also includes pvc, a simple command line client application you can use to control pvd. pvc has commands for setting the current photo playlist, jumping between photos, etc. pvd implements caching in the background which makes it possible to quickly switch between photos even if the files are fetched over network or if pvd runs on a slow computer. pvd uses the DevIL image library for loading photo files, which supports a large number of image formats.
 
@@ -22,7 +22,7 @@ Executable pvd
   Other-Modules:   Codec.Image.DevIL.Extras
   Build-tools:     hsc2hs
   Extensions:      ForeignFunctionInterface, CPP
-  Ghc-Options:     -threaded -O2
+  Ghc-Options:     -threaded
   Extra-Libraries: IL, pthread
   if os(windows)
     CPP-Options: -DCALLTYPE=stdcall
