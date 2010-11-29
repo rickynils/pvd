@@ -51,13 +51,13 @@ usageError (Just cmd) msg = do
 
 parseOptions cmd argv = case Map.lookup cmd commandMap of
   Nothing -> usageError Nothing $ "Unknown command: "++cmd
-  Just c -> case getOpt Permute (commonOptions++(cmdOptions c)) argv of
+  Just c -> case getOpt Permute (commonOptions ++ cmdOptions c) argv of
     (o,n,[]  ) -> return (cmdAction c, o, n)
-    (_,_,errs) -> usageError (Just c) (concat $ map (filter ('\n' /=)) errs)
+    (_,_,errs) -> usageError (Just c) (concatMap (filter ('\n' /=)) errs)
 
 commonOptions =
-  [ Option ['p'] ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
-  , Option ['h'] ["host"] (ReqArg Host "HOST") "photo viewer daemon host"
+  [ Option "p" ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
+  , Option "h" ["host"] (ReqArg Host "HOST") "photo viewer daemon host"
   ]
 
 commands =
@@ -93,20 +93,20 @@ helpAct _ _ = printCmdHelp (commandMap Map.! "help")
 helpUsage = "<CMD>\n\n  Prints help text for the given command"
 
 playlistOpts =
-  [ Option ['l'] ["filelist"] (ReqArg Playlist "PLAYLIST") "playlist file"
-  , Option ['a'] ["add"] (NoArg Add) "adds the selected files to the end of the current playlist"
-  , Option ['r'] ["replace"] (NoArg Replace) "replaces the contents of the current playlist with the selected files"
-  , Option ['i'] ["insert"] (NoArg Insert) "inserts the selected files first in the current playlist"
+  [ Option "l" ["filelist"] (ReqArg Playlist "PLAYLIST") "playlist file"
+  , Option "a" ["add"] (NoArg Add) "adds the selected files to the end of the current playlist"
+  , Option "r" ["replace"] (NoArg Replace) "replaces the contents of the current playlist with the selected files"
+  , Option "i" ["insert"] (NoArg Insert) "inserts the selected files first in the current playlist"
   ]
 
 playlistAct flags files1 = do
   files2 <- readPlaylist flags
   sendCmdStr flags $ cmdStr++" "++(unwords $ files1++files2)
   where
-    cmdStr | elem Add flags = "playlist add"
-           | elem Insert flags = "playlist insert 0"
+    cmdStr | Add `elem` flags = "playlist add"
+           | Insert `elem` flags = "playlist insert 0"
            | otherwise = "playlist replace"
-    readPlaylist fs = fmap (concat . map words) $ sequence [readFile pl | (Playlist pl) <- fs]
+    readPlaylist fs = fmap (concatMap words) $ sequence [readFile pl | (Playlist pl) <- fs]
 
 playlistUsage = "[OPTIONS] [FILES]\n\n  Manages the current pvd playlist"
 

@@ -50,7 +50,7 @@ main = do
   IL.ilInit
   (dpy,win) <- initX
   l <- newMVar ()
-  state <- newMVar $ State {
+  state <- newMVar State {
     stIdx = 0, stPlaylist = files1++files2, stDpy = dpy, stWin = win,
     stImgCache = [], stLoadLock = l, stImgCacheSize = cacheSize
   }
@@ -58,24 +58,24 @@ main = do
   forkIO $ eventLoop state
   initSocket port >>= socketLoop state
 
-readPlaylist fs = fmap (concat . map words) $ sequence [readFile pl | (Playlist pl) <- fs]
+readPlaylist fs = fmap (concatMap words) $ sequence [readFile pl | (Playlist pl) <- fs]
 
-printHelp = sequence_ $ map putStrLn $
+printHelp = mapM_ putStrLn
   [ "Usage:\n  pvd [OPTION...] [FILE...]\n"
   , "Photo Viewer Daemon - a daemon for viewing photos.\n"
-  , (usageInfo "Available options:" options)
+  , usageInfo "Available options:" options
   ]
 
 options =
-  [ Option ['h'] ["help"] (NoArg Help) "print this help text"
-  , Option ['p'] ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
-  , Option ['c'] ["cache"] (ReqArg (CacheSize . read) "SIZE") "photo cache size"
-  , Option ['l'] ["playlist"] (ReqArg Playlist "PLAYLIST") "playlist file"
+  [ Option "h" ["help"] (NoArg Help) "print this help text"
+  , Option "p" ["port"] (ReqArg Port "PORT") "photo viewer daemon port"
+  , Option "c" ["cache"] (ReqArg (CacheSize . read) "SIZE") "photo cache size"
+  , Option "l" ["playlist"] (ReqArg Playlist "PLAYLIST") "playlist file"
   ]
 
 parseOptions argv = case getOpt Permute options argv of
-  (o,n,[]  ) -> if elem Help o then printHelp >> exitSuccess else return (o, n)
-  (_,_,errs) -> printHelp >> fail (concat $ map (filter ('\n' /=)) errs)
+  (o,n,[]  ) -> if Help `elem` o then printHelp >> exitSuccess else return (o, n)
+  (_,_,errs) -> printHelp >> fail (concatMap (filter ('\n' /=)) errs)
 
 initSocket port = withSocketsDo $ do
   addrinfos <- getAddrInfo
@@ -115,14 +115,14 @@ getImg state p = do
   State { stDpy = d, stImgCache = c, stLoadLock = l } <- readMVar state
   img <- maybe (withMVar l (\_ -> loadXImg d p)) (return . Just) (lookup p c)
   flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s -> do
-    let c' = (p,i) : (take (cacheSize-1) $ filter ((/=) p . fst) (stImgCache s))
+    let c' = (p,i) : take (cacheSize-1) (filter ((/=) p . fst) (stImgCache s))
         cacheSize = stImgCacheSize s
     return (s {stImgCache = c'}, img)
 
 updateCache st = do
   s@(State {stIdx = idx, stPlaylist = pl}) <- readMVar st
   let idxs = take 5 [max 0 (idx-2) .. length pl - 1]
-  forkIO $ sequence_ $ map (getImg st . (pl !!)) idxs
+  forkIO $ mapM_ (getImg st . (pl !!)) idxs
   return ()
 
 parseCmd :: String -> State -> State
@@ -135,9 +135,9 @@ parseCmd cmd s@(State {stIdx = idx, stPlaylist = pl}) = case words cmd of
   "playlist":"replace":imgs ->
     s { stIdx = 0, stPlaylist = imgs, stImgCache = [] }
   "playlist":"insert":"0":imgs ->
-    s { stIdx = idx + (length imgs), stPlaylist = imgs++pl }
+    s { stIdx = idx + length imgs, stPlaylist = imgs++pl }
   _ -> s
 
 gotoIdx s@(State {stPlaylist = pl}) n
-  | n >= 0 && n < (length pl) = s { stIdx = n }
+  | n >= 0 && n < length pl = s { stIdx = n }
   | otherwise = s
