@@ -1,5 +1,5 @@
 Name:                pvd
-Version:             1.0.0
+Version:             1.0.1
 
 Synopsis:            A photo viewer daemon application with remote controlling abilities.
 
@@ -19,7 +19,7 @@ Cabal-version:       >=1.2
 Executable pvd
   Main-Is:         Pvd.hs
   Build-Depends:   base >= 4 && < 5, array, X11, Codec-Image-DevIL, network, mtl
-  Other-Modules:   Codec.Image.DevIL.Extras
+  Other-Modules:   Codec.Image.DevIL.Extras, XUtils
   Build-tools:     hsc2hs
   Extensions:      ForeignFunctionInterface, CPP
   Ghc-Options:     -threaded
