@@ -7,6 +7,7 @@ import Control.Concurrent.STM
 import Control.Monad (when)
 import Data.Maybe (maybe)
 import Data.List
+import Data.Ord (comparing)
 import Data.Function (on)
 import Network.Socket
 import qualified Codec.Image.DevIL as IL (ilInit)
@@ -125,7 +126,7 @@ fetchNextPath state = do
   pl <- readTVar (stPlaylist state)
   cache <- readTVar (stImgCache state)
   idx <- readTVar (stIdx state)
-  let paths = (take sz (sortBy (comparePaths pl idx) pl)) \\ (fst $ unzip cache)
+  let paths = take sz (sortBy (comparePaths pl idx) pl) \\ fst (unzip cache)
       sz = stImgCacheSize state
   if null paths then retry else return (head paths)
 
@@ -133,7 +134,7 @@ putImgInCache state img path = do
   cache <- readTVar (stImgCache state)
   pl <- readTVar (stPlaylist state)
   idx <- readTVar (stIdx state)
-  let cache' = (path,img) : (filter ((path /=) . fst) cache)
+  let cache' = (path,img) : filter ((path /=) . fst) cache
       scache = sortBy (comparePaths pl idx `on` fst) cache'
   writeTVar (stImgCache state) (take (stImgCacheSize state) scache)
   return path
@@ -142,8 +143,8 @@ comparePaths playlist idx p1 p2 = case (i1,i2) of
   (Nothing, Nothing) -> EQ
   (Nothing, Just _) -> GT
   (Just _, Nothing) -> LT
-  (Just n1, Just n2) | elem idx [n1,n2] -> (compare `on` abs) (n1-idx) (n2-idx)
-  (Just n1, Just n2) -> (compare `on` abs) (n1-idx-1) (n2-idx-1)
+  (Just n1, Just n2) | idx `elem` [n1,n2] -> comparing abs (n1-idx) (n2-idx)
+  (Just n1, Just n2) -> comparing abs (n1-idx-1) (n2-idx-1)
   where
     i1 = elemIndex p1 playlist
     i2 = elemIndex p2 playlist
@@ -155,7 +156,7 @@ parseCmd s@(State {stIdx = idx, stPlaylist = pl}) cmd = case words cmd of
   ["first"] -> gotoIdx s (\_ -> 0)
   ["last"] -> readTVar pl >>= (\p -> gotoIdx s (\_ -> length p - 1))
   "playlist":"add":imgs -> do
-    fmap (++ imgs) (readTVar pl) >>= (writeTVar pl)
+    fmap (++ imgs) (readTVar pl) >>= writeTVar pl
     return True
   "playlist":"replace":imgs -> do
     writeTVar idx 0
@@ -163,7 +164,7 @@ parseCmd s@(State {stIdx = idx, stPlaylist = pl}) cmd = case words cmd of
     return True
   "playlist":"insert":"0":imgs -> do
     p <- readTVar pl
-    fmap (+ (length p)) (readTVar idx) >>= (writeTVar idx)
+    fmap (+ length p) (readTVar idx) >>= writeTVar idx
     writeTVar pl (imgs++p)
     return True
   _ -> return False
