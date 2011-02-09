@@ -1,22 +1,14 @@
--- vim: syntax=haskell
-
 module Main (
   main
 ) where
 
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Exception
-import Control.Monad
-import Control.Applicative
-import Control.Monad.Error
-import Control.Monad.Trans
-import Data.Foldable (notElem)
-import Data.Maybe
+import Control.Monad (when)
+import Data.Maybe (maybe)
 import Data.List
 import Data.Function (on)
 import Network.Socket
-import Prelude hiding (notElem)
 import qualified Codec.Image.DevIL as IL (ilInit)
 import qualified Graphics.X11.Xlib as X
 import qualified Graphics.X11.Xlib.Extras as X
