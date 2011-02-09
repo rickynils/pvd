@@ -5,6 +5,7 @@ module Main (
 ) where
 
 import Control.Concurrent
+import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
 import Control.Applicative
@@ -12,6 +13,8 @@ import Control.Monad.Error
 import Control.Monad.Trans
 import Data.Foldable (notElem)
 import Data.Maybe
+import Data.List
+import Data.Function (on)
 import Network.Socket
 import Prelude hiding (notElem)
 import qualified Codec.Image.DevIL as IL (ilInit)
@@ -23,23 +26,25 @@ import System (getArgs)
 import System.Console.GetOpt
 import XUtils
 
+type Index = TVar Int
+type Playlist = TVar [String]
+type Cache = TVar [(String, CachedImg)]
+
+data CachedImg = CachedImg XImg | LoadingImg | LoadFailed
+
+data State = State {
+  stIdx :: Index,
+  stPlaylist :: Playlist,
+  stDpy :: X.Display,
+  stWin :: X.Window,
+  stImgCache :: Cache,
+  stImgCacheSize :: Int,
+  stSocket :: Socket
+}
+
 data Flag =
   Port String | CacheSize Int | Playlist String | Help
     deriving (Eq)
-
-data State = State {
-  stIdx :: Int,
-  stPlaylist :: [String],
-  stDpy :: X.Display,
-  stWin :: X.Window,
-  stImgCache :: [(String, XImg)],
-  stLoadLock :: MVar (),
-  stImgCacheSize :: Int
-}
-
-imgPath (State {stIdx = idx, stPlaylist = pl})
-  | idx >= 0 && idx < length pl = Just (pl !! idx)
-  | otherwise = Nothing
 
 main = do
   args <- getArgs
@@ -49,14 +54,17 @@ main = do
       port = last [p | Port p <- Port "4245" : flags]
   IL.ilInit
   (dpy,win) <- initX
-  l <- newMVar ()
-  state <- newMVar State {
-    stIdx = 0, stPlaylist = files1++files2, stDpy = dpy, stWin = win,
-    stImgCache = [], stLoadLock = l, stImgCacheSize = cacheSize
+  socket <- initSocket port
+  cache <- newTVarIO []
+  idx <- newTVarIO 0
+  playlist <- newTVarIO (files1++files2)
+  let state = State {
+    stIdx = idx, stPlaylist = playlist, stDpy = dpy, stWin = win,
+    stImgCache = cache, stImgCacheSize = cacheSize, stSocket = socket
   }
-  updateCache state
+  forkIO $ cacheLoop state
   forkIO $ eventLoop state
-  initSocket port >>= socketLoop state
+  socketLoop state
 
 readPlaylist fs = fmap (concatMap words) $ sequence [readFile pl | (Playlist pl) <- fs]
 
@@ -87,57 +95,90 @@ initSocket port = withSocketsDo $ do
   listen sock 5
   return sock
 
-socketLoop state sock = do
-  (connsock, clientaddr) <- accept sock
+socketLoop state = do
+  (connsock, clientaddr) <- accept (stSocket state)
   forkIO $ processMessages connsock clientaddr
-  socketLoop state sock
+  socketLoop state
     where
       processMessages connsock clientaddr = do
         connhdl <- socketToHandle connsock ReadMode
         hSetBuffering connhdl LineBuffering
         messages <- hGetContents connhdl
-        mapM_ runParseCmd (lines messages)
+        redraw <- fmap or $ mapM (atomically . parseCmd state) (lines messages)
+        when redraw $ sendExposeEvent (stDpy state) (stWin state)
         hClose connhdl
-      runParseCmd c = do
-        (redraw,dpy,win) <- modifyMVar state $ \s -> do
-          let s' = parseCmd c s
-          return (s', (imgPath s' /= imgPath s, stDpy s', stWin s'))
-        when redraw $ sendExposeEvent dpy win >> updateCache state
 
 eventLoop state = do
-  s <- readMVar state
-  img <- maybe (return Nothing) (getImg state) (imgPath s)
-  drawImg (stDpy s) (stWin s) img
-  X.allocaXEvent $ \e -> X.nextEvent (stDpy s) e
+  img <- atomically (fetchImage state)
+  drawImg (stDpy state) (stWin state) img
+  X.allocaXEvent $ \e -> X.nextEvent (stDpy state) e
   eventLoop state
 
-getImg state p = do
-  State { stDpy = d, stImgCache = c, stLoadLock = l } <- readMVar state
-  img <- maybe (withMVar l (\_ -> loadXImg d p)) (return . Just) (lookup p c)
-  flip (maybe (return Nothing)) img $ \i -> modifyMVar state $ \s -> do
-    let c' = (p,i) : take (cacheSize-1) (filter ((/=) p . fst) (stImgCache s))
-        cacheSize = stImgCacheSize s
-    return (s {stImgCache = c'}, img)
+cacheLoop state = do
+  path <- atomically (fetchNextPath state >>= putImgInCache state LoadingImg)
+  img <- fmap (maybe LoadFailed CachedImg) (loadXImg (stDpy state) path)
+  atomically (putImgInCache state img path)
+  cacheLoop state
 
-updateCache st = do
-  s@(State {stIdx = idx, stPlaylist = pl}) <- readMVar st
-  let idxs = take 5 [max 0 (idx-2) .. length pl - 1]
-  forkIO $ mapM_ (getImg st . (pl !!)) idxs
-  return ()
+fetchImage state = do
+  idx <- readTVar (stIdx state)
+  pl <- readTVar (stPlaylist state)
+  path <- if idx >= 0 && idx < length pl then return (pl !! idx) else retry
+  cache <- readTVar (stImgCache state)
+  case lookup path cache of
+    Just (CachedImg img) -> return img
+    _ -> retry
 
-parseCmd :: String -> State -> State
-parseCmd cmd s@(State {stIdx = idx, stPlaylist = pl}) = case words cmd of
-  ["next"] -> gotoIdx s (idx+1)
-  ["prev"] -> gotoIdx s (idx-1)
-  ["first"] -> gotoIdx s 0
-  ["last"] -> gotoIdx s (length pl - 1)
-  "playlist":"add":imgs -> s { stPlaylist = pl++imgs }
-  "playlist":"replace":imgs ->
-    s { stIdx = 0, stPlaylist = imgs, stImgCache = [] }
-  "playlist":"insert":"0":imgs ->
-    s { stIdx = idx + length imgs, stPlaylist = imgs++pl }
-  _ -> s
+fetchNextPath state = do
+  pl <- readTVar (stPlaylist state)
+  cache <- readTVar (stImgCache state)
+  idx <- readTVar (stIdx state)
+  let paths = (take sz (sortBy (comparePaths pl idx) pl)) \\ (fst $ unzip cache)
+      sz = stImgCacheSize state
+  if null paths then retry else return (head paths)
 
-gotoIdx s@(State {stPlaylist = pl}) n
-  | n >= 0 && n < length pl = s { stIdx = n }
-  | otherwise = s
+putImgInCache state img path = do
+  cache <- readTVar (stImgCache state)
+  pl <- readTVar (stPlaylist state)
+  idx <- readTVar (stIdx state)
+  let cache' = (path,img) : (filter ((path /=) . fst) cache)
+      scache = sortBy (comparePaths pl idx `on` fst) cache'
+  writeTVar (stImgCache state) (take (stImgCacheSize state) scache)
+  return path
+
+comparePaths playlist idx p1 p2 = case (i1,i2) of
+  (Nothing, Nothing) -> EQ
+  (Nothing, Just _) -> GT
+  (Just _, Nothing) -> LT
+  (Just n1, Just n2) | elem idx [n1,n2] -> (compare `on` abs) (n1-idx) (n2-idx)
+  (Just n1, Just n2) -> (compare `on` abs) (n1-idx-1) (n2-idx-1)
+  where
+    i1 = elemIndex p1 playlist
+    i2 = elemIndex p2 playlist
+
+parseCmd :: State -> String -> STM Bool
+parseCmd s@(State {stIdx = idx, stPlaylist = pl}) cmd = case words cmd of
+  ["next"] -> gotoIdx s (+ 1)
+  ["prev"] -> gotoIdx s (+ (-1))
+  ["first"] -> gotoIdx s (\_ -> 0)
+  ["last"] -> readTVar pl >>= (\p -> gotoIdx s (\_ -> length p - 1))
+  "playlist":"add":imgs -> do
+    fmap (++ imgs) (readTVar pl) >>= (writeTVar pl)
+    return True
+  "playlist":"replace":imgs -> do
+    writeTVar idx 0
+    writeTVar pl imgs
+    return True
+  "playlist":"insert":"0":imgs -> do
+    p <- readTVar pl
+    fmap (+ (length p)) (readTVar idx) >>= (writeTVar idx)
+    writeTVar pl (imgs++p)
+    return True
+  _ -> return False
+
+gotoIdx (State {stIdx = idx, stPlaylist = pl}) f = do
+  i <- readTVar idx
+  let i' = f i
+  l <- fmap length (readTVar pl)
+  when (i' /= i && i' >= 0 && i' < l) (writeTVar idx i')
+  return (i' /= i)

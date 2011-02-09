@@ -35,7 +35,7 @@ initX = do
       col <- initColor dpy "#000000"
       X.createSimpleWindow dpy rootw 0 0 (fromIntegral $ X.wa_width attr) (fromIntegral $ X.wa_height attr) 1 col col
 
-drawImg :: X.Display -> X.Window -> Maybe XImg -> IO ()
+drawImg :: X.Display -> X.Window -> XImg -> IO ()
 drawImg dpy win ximg = do
   bgcolor <- initColor dpy "#000000"
   gc <- X.createGC dpy win
@@ -44,12 +44,11 @@ drawImg dpy win ximg = do
   pixmap <- X.createPixmap dpy win winWidth winHeight depth
   X.setForeground dpy gc bgcolor
   X.fillRectangle dpy pixmap gc 0 0 winWidth winHeight
-  for_ ximg $ \xi -> do
-    let portWidth = fromIntegral (xImgW xi)
-        portHeight = fromIntegral (xImgH xi)
-        portX = fromIntegral ((winWidth-portWidth) `div` 2)
-        portY = fromIntegral ((winHeight-portHeight) `div` 2)
-    X.putImage dpy pixmap gc (xImg xi) 0 0 portX portY portWidth portHeight
+  let portWidth = fromIntegral (xImgW ximg)
+      portHeight = fromIntegral (xImgH ximg)
+      portX = fromIntegral ((winWidth-portWidth) `div` 2)
+      portY = fromIntegral ((winHeight-portHeight) `div` 2)
+  X.putImage dpy pixmap gc (xImg ximg) 0 0 portX portY portWidth portHeight
   X.copyArea dpy pixmap win gc 0 0 winWidth winHeight 0 0
   X.freeGC dpy gc
   X.freePixmap dpy pixmap
