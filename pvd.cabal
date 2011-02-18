@@ -19,9 +19,9 @@ Cabal-version:       >=1.2
 Executable pvd
   Main-Is:         Pvd.hs
   Build-Depends:   base >= 4 && < 5, array, X11, Codec-Image-DevIL, network, mtl
-  Other-Modules:   Codec.Image.DevIL.Extras, XUtils, PvdSocket, PvdState
+  Other-Modules:   Codec.Image.DevIL.Extras, XUtils, PvdSocket, PvdMonad
   Build-tools:     hsc2hs
-  Extensions:      ForeignFunctionInterface, CPP
+  Extensions:      ForeignFunctionInterface, CPP, GeneralizedNewtypeDeriving
   Ghc-Options:     -threaded
   Extra-Libraries: IL, pthread
   if os(windows)
