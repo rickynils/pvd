@@ -35,8 +35,8 @@ initSocket port = withSocketsDo $ do
 handleCmd :: String -> Pvd Bool
 handleCmd cmd = case words cmd of
   ["next"] -> modIdx $ (1 +) . snd
-  ["prev"] -> modIdx $ (1 -) . snd
-  ["last"] -> modIdx $ (1 -) . fst
+  ["prev"] -> modIdx $ (-1 +) . snd
+  ["last"] -> modIdx $ (-1 +) . fst
   ["first"] -> modIdx $ \_ -> 0
   "playlist":"add":imgs -> modPlaylist (++ imgs)
   "playlist":"replace":imgs -> liftM2 (||) (setIdx 0) (setPlaylist imgs)
