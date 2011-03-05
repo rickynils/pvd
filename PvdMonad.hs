@@ -1,7 +1,6 @@
 module PvdMonad (
   Pvd,
   PvdConf,
-  State(..),
   CachedImg(..),
   initPvd,
   runPvd,
@@ -28,16 +27,6 @@ import Data.List ((\\), sortBy, elemIndex)
 import Graphics.X11.Xlib (Display, Window)
 import Network.Socket (Socket)
 import XUtils (XImg)
-
-data State = State {
-  stIdx :: TVar Int,
-  stPlaylist :: TVar [String],
-  stDpy :: Display,
-  stWin :: Window,
-  stImgCache :: TVar [(String, CachedImg)],
-  stImgCacheSize :: Int,
-  stSocket :: Socket
-}
 
 data PvdConf = PvdConf {
   cIdx :: TVar Int,
@@ -66,6 +55,12 @@ initPvd playlist dpy win cacheSize socket = do
   }
   return conf
 
+readT :: (PvdConf -> TVar a) -> Pvd a
+readT f = liftM f ask >>= (lift . readTVar)
+
+writeT :: (PvdConf -> TVar a) -> a -> Pvd ()
+writeT f x = liftM f ask >>= (lift . flip writeTVar x)
+
 getSocket :: Pvd Socket
 getSocket = liftM cSocket ask
 
@@ -76,51 +71,48 @@ getWin :: Pvd Window
 getWin = liftM cWin ask
 
 getPlaylist :: Pvd [String]
-getPlaylist = liftM cPlaylist ask >>= (lift . readTVar)
+getPlaylist = readT cPlaylist
 
 setPlaylist :: [String] -> Pvd Bool
 setPlaylist p = do
-  pl <- liftM cPlaylist ask
-  p0 <- lift $ readTVar pl
-  lift $ writeTVar pl p
+  p0 <- readT cPlaylist
+  writeT cPlaylist p
   return (p /= p0)
 
 getIdx :: Pvd Int
-getIdx = liftM cIdx ask >>= (lift . readTVar)
+getIdx = readT cIdx
 
 setIdx :: Int -> Pvd Bool
 setIdx i = do
-  idx <- liftM cIdx ask
-  i0 <- lift $ readTVar idx
-  lift $ writeTVar idx i
+  i0 <- readT cIdx
+  writeT cIdx i
   return (i /= i0)
 
 currentImage = do
   idx <- getIdx
   pl <- getPlaylist
   path <- if idx >= 0 && idx < length pl then return (pl !! idx) else lift retry
-  cache <- liftM cImgCache ask >>= (lift . readTVar)
+  cache <- readT cImgCache
   case lookup path cache of
     Just (CachedImg img) -> return img
     _ -> lift retry
 
 fetchNextPath = do
   pl <- getPlaylist
-  cache <- liftM cImgCache ask >>= (lift . readTVar)
+  cache <- readT cImgCache
   idx <- getIdx
   sz <- liftM cImgCacheSize ask
   let paths = take sz (sortBy (comparePaths pl idx) pl) \\ fst (unzip cache)
   if null paths then lift retry else return (head paths)
 
 putImgInCache img path = do
-  c <- liftM cImgCache ask
-  cache <- lift $ readTVar c
+  cache <- readT cImgCache
   pl <- getPlaylist
   idx <- getIdx
   cacheSize <- liftM cImgCacheSize ask
   let cache' = (path,img) : filter ((path /=) . fst) cache
       scache = sortBy (comparePaths pl idx `on` fst) cache'
-  lift $ writeTVar c (take cacheSize scache)
+  writeT cImgCache (take cacheSize scache)
   return path
 
 comparePaths playlist idx p1 p2 = case (i1,i2) of
