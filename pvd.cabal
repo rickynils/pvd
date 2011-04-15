@@ -1,5 +1,5 @@
 Name:                pvd
-Version:             1.1.0
+Version:             1.1.1
 
 Synopsis:            A photo viewer daemon application with remote controlling abilities.
 
@@ -10,7 +10,7 @@ License:             BSD3
 License-file:        LICENSE
 Author:              Rickard Nilsson
 Maintainer:          rickard.nilsson@telia.com
-Copyright:           (c) 2010, Rickard Nilsson
+Copyright:           (c) 2011, Rickard Nilsson
 Category:            Image Viewer
 Build-type:          Simple
 Extra-source-files:  README
