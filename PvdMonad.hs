@@ -15,7 +15,9 @@ module PvdMonad (
   getDpy,
   modIdx,
   getIdx,
-  setIdx
+  setIdx,
+  notifyChange,
+  waitForChange
 ) where
 
 import Control.Concurrent.STM
@@ -35,7 +37,8 @@ data PvdConf = PvdConf {
   cWin :: Window,
   cImgCache :: TVar [(String, CachedImg)],
   cImgCacheSize :: Int,
-  cSocket :: Socket
+  cSocket :: Socket,
+  cChanges :: TVar Int
 }
 
 data CachedImg = CachedImg XImg | LoadingImg | LoadFailed
@@ -48,10 +51,11 @@ runPvd conf pvd = atomically $ runReaderT pvd conf
 initPvd playlist dpy win cacheSize socket = do
   cache <- newTVarIO []
   idx <- newTVarIO 0
+  c <- newTVarIO 1
   pl <- newTVarIO playlist
   let conf = PvdConf {
-    cIdx = idx, cPlaylist = pl, cDpy = dpy, cWin = win,
-    cImgCache = cache, cImgCacheSize = cacheSize, cSocket = socket
+    cIdx = idx, cPlaylist = pl, cDpy = dpy, cWin = win, cImgCache = cache,
+    cImgCacheSize = cacheSize, cSocket = socket, cChanges = c
   }
   return conf
 
@@ -60,6 +64,10 @@ readT f = liftM f ask >>= (lift . readTVar)
 
 writeT :: (PvdConf -> TVar a) -> a -> Pvd ()
 writeT f x = liftM f ask >>= (lift . flip writeTVar x)
+
+modT f g = do
+  x <- readT f
+  writeT f (g x)
 
 getSocket :: Pvd Socket
 getSocket = liftM cSocket ask
@@ -131,3 +139,10 @@ modIdx f = do
   setIdx $ max 0 (min (l-1) (f (l,i)))
 
 modPlaylist f = liftM f getPlaylist >>= setPlaylist
+
+notifyChange = modT cChanges (+ 1)
+
+waitForChange = do
+  c <- readT cChanges
+  when (c <= 0) (lift retry)
+  writeT cChanges 0

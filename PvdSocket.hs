@@ -8,7 +8,6 @@ import Control.Concurrent.STM
 import Control.Monad (liftM, liftM2, liftM3, when)
 import Network.Socket
 import qualified System.IO as IO
-import qualified XUtils as X
 import PvdMonad
 
 handleClient conf = do
@@ -20,7 +19,7 @@ handleClient conf = do
           messages <- IO.hGetContents connhdl
           redraw <- fmap or $ mapM (runPvd conf . handleCmd) (lines messages)
           IO.hClose connhdl
-          when redraw $ X.sendExposeEvent dpy win
+          when redraw $ runPvd conf notifyChange
 
 initSocket port = withSocketsDo $ do
   addrinfos <- getAddrInfo

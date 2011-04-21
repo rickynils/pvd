@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
 import Control.Monad (when, forever, liftM3, liftM)
 import Data.Maybe (maybe)
@@ -21,8 +21,9 @@ data Flag =
 main = do
   conf <- initApp
   forkIO $ forever $ updateCache conf
-  forkIO $ forever $ handleEvent conf
-  forever $ handleClient conf
+  forkIO $ forever $ handleImg conf
+  forkIO $ forever $ handleClient conf
+  forever $ handleEvent conf
 
 initApp = do
   args <- getArgs
@@ -53,10 +54,21 @@ options =
   , Option "l" ["playlist"] (ReqArg Playlist "PLAYLIST") "playlist file"
   ]
 
-handleEvent conf = do
+handleImg conf = do
   (img, dpy, win) <- runPvd conf (liftM3 (,,) currentImage getDpy getWin)
   X.drawImg dpy win img
-  X.allocaXEvent $ \e -> X.nextEvent dpy e
+  runPvd conf waitForChange
+
+handleEvent conf = do
+  dpy <- runPvd conf getDpy
+  -- We have to poll for events since otherwise
+  -- the handleImg thread will be deadlocked
+  -- Maybe we should switch to the XCB lib instead...
+  p <- X.pending dpy
+  when (p > 0) $ X.allocaXEvent $ \e -> do
+    et <- X.nextEvent dpy e >> X.get_EventType e
+    when (et == X.expose) (runPvd conf notifyChange)
+  threadDelay (100 * 1000)
 
 updateCache conf = do
   (path, dpy) <- runPvd conf $ do

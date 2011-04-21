@@ -1,7 +1,6 @@
 module XUtils (
   initX,
   drawImg,
-  sendExposeEvent,
   loadXImg,
   XImg
 ) where
@@ -23,11 +22,13 @@ data XImg = XImg {
 }
 
 initX = do
+  X.initThreads
   dpy <- X.openDisplay ""
   rootw <- X.rootWindow dpy (X.defaultScreen dpy)
   win <- mkWin dpy rootw
   X.selectInput dpy win X.exposureMask
   X.mapWindow dpy win
+  X.flush dpy
   return (dpy,win)
   where
     mkWin dpy rootw = do
@@ -50,9 +51,8 @@ drawImg dpy win ximg = do
       portY = fromIntegral ((winHeight-portHeight) `div` 2)
   X.putImage dpy pixmap gc (xImg ximg) 0 0 portX portY portWidth portHeight
   X.copyArea dpy pixmap win gc 0 0 winWidth winHeight 0 0
-  X.freeGC dpy gc
   X.freePixmap dpy pixmap
-  X.sync dpy True
+  X.freeGC dpy gc
 
 initColor :: X.Display -> String -> IO X.Pixel
 initColor dpy color = do
@@ -88,8 +88,3 @@ loadXImg dpy path = do
     ximg <- makeXImage dpy i
     IL.unloadImage i
     return $ Just ximg
-
-sendExposeEvent dpy win = X.allocaXEvent $ \e -> do
-  X.setEventType e X.expose
-  X.sendEvent dpy win False X.noEventMask e
-  X.flush dpy
