@@ -4,7 +4,7 @@ module Main (
   main
 ) where
 
-import System (getArgs)
+import System.Environment (getArgs)
 import System.Console.GetOpt
 import Control.Monad (when)
 import qualified Data.Map as Map

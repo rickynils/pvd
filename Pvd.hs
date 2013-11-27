@@ -10,7 +10,7 @@ import qualified Graphics.X11.Xlib.Extras as X
 import qualified XUtils as X
 import System.Console.GetOpt
 import System.Exit (exitSuccess)
-import System (getArgs)
+import System.Environment (getArgs)
 import PvdSocket (initSocket, handleClient)
 import PvdMonad
 
